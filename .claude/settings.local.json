@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"\\\\\\\\.git\\\\|build\\\\|\\\\\\\\.\\\\\\(dart_tool\\\\|idea\\\\\\)\")"
+    ]
+  }
+}
