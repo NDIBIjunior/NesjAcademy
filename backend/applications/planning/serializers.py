@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import Matiere, ObjectifMatiere
+from .models import DisponibiliteEleve, Matiere, ObjectifMatiere
 
 
 class MatiereResumeSerializer(serializers.ModelSerializer):
@@ -42,3 +42,32 @@ class ObjectifMatiereSerializer(serializers.ModelSerializer):
     class Meta:
         model = ObjectifMatiere
         fields = ["id", "matiere", "note_cible"]
+
+
+class DisponibiliteEleveSerializer(serializers.ModelSerializer):
+    """
+    Lecture et écriture des disponibilités d'un élève.
+    Les propriétés calculées (total_heures_semaine, jours_disponibles)
+    sont en lecture seule — calculées automatiquement par le modèle.
+    """
+
+    total_heures_semaine = serializers.ReadOnlyField()
+    jours_disponibles    = serializers.ReadOnlyField()
+
+    class Meta:
+        model = DisponibiliteEleve
+        fields = [
+            "id",
+            # Jours disponibles
+            "lundi_dispo", "mardi_dispo", "mercredi_dispo",
+            "jeudi_dispo", "vendredi_dispo", "samedi_dispo", "dimanche_dispo",
+            # Heures par jour
+            "heures_lundi", "heures_mardi", "heures_mercredi",
+            "heures_jeudi", "heures_vendredi", "heures_samedi", "heures_dimanche",
+            # Préférences horaires
+            "creneau_prefere", "heure_debut",
+            # Calculés
+            "total_heures_semaine", "jours_disponibles",
+            "date_mise_a_jour",
+        ]
+        read_only_fields = ["id", "date_mise_a_jour"]

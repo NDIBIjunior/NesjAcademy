@@ -5,8 +5,10 @@ from rest_framework.views import APIView
 
 from applications.diagnostic.models import ResultatDiagnostic
 
-from .models import Matiere, ObjectifMatiere
+from .conseiller import ConseillerDisponibilite
+from .models import DisponibiliteEleve, Matiere, ObjectifMatiere
 from .serializers import (
+    DisponibiliteEleveSerializer,
     ItemObjectifSerializer,
     MatiereResumeSerializer,
     ObjectifMatiereSerializer,
@@ -153,3 +155,71 @@ class VueObjectifsEleve(APIView):
             donnees.append(entree)
 
         return Response(donnees, status=status.HTTP_200_OK)
+
+
+class VueDisponibilite(APIView):
+    """
+    GET  /api/planning/disponibilite/
+    POST /api/planning/disponibilite/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    # ── GET ───────────────────────────────────────────────────────────────────
+
+    def get(self, request):
+        """
+        Retourne les disponibilités de l'élève connecté.
+        Si aucun enregistrement n'existe encore, renvoie les valeurs par défaut
+        sans créer d'entrée en base (l'élève n'a pas encore confirmé).
+        """
+        eleve = request.user
+        try:
+            dispo = DisponibiliteEleve.objects.get(eleve=eleve)
+        except DisponibiliteEleve.DoesNotExist:
+            # Instance non sauvegardée : tous les champs ont leur valeur par défaut
+            dispo = DisponibiliteEleve(eleve=eleve)
+
+        return Response(DisponibiliteEleveSerializer(dispo).data)
+
+    # ── POST ──────────────────────────────────────────────────────────────────
+
+    def post(self, request):
+        """
+        Crée ou met à jour les disponibilités de l'élève connecté.
+        Appelle ensuite le conseiller pour analyser si le temps est suffisant.
+
+        Réponse :
+        {
+          "disponibilite": { ...tous les champs... },
+          "conseil": {
+            "statut": "suffisant",
+            "emoji": "✅",
+            "titre": "Parfait !",
+            "message": "...",
+            "details": [{"matiere": "Maths", "heures_estimees": 36}, ...]
+          }
+        }
+        """
+        ser = DisponibiliteEleveSerializer(data=request.data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        eleve = request.user
+
+        # Crée ou met à jour l'enregistrement de disponibilités
+        dispo, _ = DisponibiliteEleve.objects.update_or_create(
+            eleve=eleve,
+            defaults=ser.validated_data,
+        )
+
+        # Analyse si le temps disponible est suffisant pour atteindre les objectifs
+        conseil = ConseillerDisponibilite().analyser(eleve, dispo)
+
+        return Response(
+            {
+                "disponibilite": DisponibiliteEleveSerializer(dispo).data,
+                "conseil": conseil,
+            },
+            status=status.HTTP_200_OK,
+        )

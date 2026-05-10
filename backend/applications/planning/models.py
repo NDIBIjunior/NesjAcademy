@@ -1,3 +1,5 @@
+import datetime
+
 from django.conf import settings
 from django.db import models
 
@@ -223,3 +225,81 @@ class ObjectifMatiere(models.Model):
 
     def __str__(self):
         return f"{self.eleve} → {self.matiere.nom} : {self.note_cible}/20"
+
+
+class DisponibiliteEleve(models.Model):
+    """Créneaux horaires disponibles d'un élève — collectés avant la génération du planning."""
+
+    CRENEAUX = [
+        ('matin', 'Matin (6h - 12h)'),
+        ('apres_midi', 'Après-midi (12h - 18h)'),
+        ('soir', 'Soir (18h - 22h)'),
+    ]
+
+    # OneToOneField : un seul profil de disponibilité par élève
+    eleve = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='disponibilite',
+        limit_choices_to={'role': 'eleve'},
+    )
+
+    # ── Jours disponibles (True = l'élève peut travailler ce jour) ────────────
+    lundi_dispo    = models.BooleanField(default=True)
+    mardi_dispo    = models.BooleanField(default=True)
+    mercredi_dispo = models.BooleanField(default=True)
+    jeudi_dispo    = models.BooleanField(default=True)
+    vendredi_dispo = models.BooleanField(default=True)
+    samedi_dispo   = models.BooleanField(default=True)
+    dimanche_dispo = models.BooleanField(default=False)
+
+    # ── Heures d'étude par jour (peut varier selon le jour) ───────────────────
+    heures_lundi    = models.PositiveSmallIntegerField(default=2)
+    heures_mardi    = models.PositiveSmallIntegerField(default=2)
+    heures_mercredi = models.PositiveSmallIntegerField(default=2)
+    heures_jeudi    = models.PositiveSmallIntegerField(default=2)
+    heures_vendredi = models.PositiveSmallIntegerField(default=2)
+    heures_samedi   = models.PositiveSmallIntegerField(default=3)
+    heures_dimanche = models.PositiveSmallIntegerField(default=0)
+
+    # ── Préférences horaires ──────────────────────────────────────────────────
+    creneau_prefere = models.CharField(max_length=10, choices=CRENEAUX, default='soir')
+    # Heure de début souhaitée pour les sessions (ex : 18:00)
+    heure_debut = models.TimeField(default=datetime.time(18, 0))
+
+    date_mise_a_jour = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Disponibilité Élève"
+        verbose_name_plural = "Disponibilités Élèves"
+
+    def __str__(self):
+        return f"Disponibilité de {self.eleve} ({self.total_heures_semaine}h/semaine)"
+
+    @property
+    def total_heures_semaine(self):
+        """Somme des heures des jours où l'élève est disponible uniquement."""
+        jours = [
+            (self.lundi_dispo,    self.heures_lundi),
+            (self.mardi_dispo,    self.heures_mardi),
+            (self.mercredi_dispo, self.heures_mercredi),
+            (self.jeudi_dispo,    self.heures_jeudi),
+            (self.vendredi_dispo, self.heures_vendredi),
+            (self.samedi_dispo,   self.heures_samedi),
+            (self.dimanche_dispo, self.heures_dimanche),
+        ]
+        return sum(heures for dispo, heures in jours if dispo)
+
+    @property
+    def jours_disponibles(self):
+        """Liste des noms de jours où l'élève peut étudier. Ex: ['lundi', 'mercredi']."""
+        correspondance = [
+            ('lundi',    self.lundi_dispo),
+            ('mardi',    self.mardi_dispo),
+            ('mercredi', self.mercredi_dispo),
+            ('jeudi',    self.jeudi_dispo),
+            ('vendredi', self.vendredi_dispo),
+            ('samedi',   self.samedi_dispo),
+            ('dimanche', self.dimanche_dispo),
+        ]
+        return [nom for nom, dispo in correspondance if dispo]
