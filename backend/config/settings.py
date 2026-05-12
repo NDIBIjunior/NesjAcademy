@@ -145,3 +145,12 @@ REST_FRAMEWORK = {
 # En développement on autorise toutes les origines (Flutter web + émulateur).
 # En production, remplacer par CORS_ALLOWED_ORIGINS avec l'URL Railway.
 CORS_ALLOW_ALL_ORIGINS = True
+
+# ── Simple JWT ─────────────────────────────────────────────────────────────────
+from datetime import timedelta
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME':  timedelta(hours=24),   # dev: 24h, prod: réduire à 15min
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
+    'ROTATE_REFRESH_TOKENS':  True,                  # chaque refresh donne un nouveau refresh
+    'BLACKLIST_AFTER_ROTATION': False,                # pas de blacklist en dev (pas de redis)
+}

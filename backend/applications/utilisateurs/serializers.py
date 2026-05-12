@@ -200,3 +200,35 @@ class ProfilSerializer(serializers.ModelSerializer):
             "date_inscription",
         ]
         read_only_fields = fields
+
+
+class ProfilModificationSerializer(serializers.ModelSerializer):
+    """Mise à jour partielle du profil — champs éditables par l'élève."""
+
+    class Meta:
+        model = Utilisateur
+        fields = [
+            "nom",
+            "prenom",
+            "ville",
+            "etablissement",
+            "sexe",
+            "age",
+            "date_examen",
+            "heures_par_jour",
+        ]
+        extra_kwargs = {
+            "nom":            {"required": False},
+            "prenom":         {"required": False},
+            "ville":          {"required": False},
+            "etablissement":  {"required": False},
+            "sexe":           {"required": False},
+            "age":            {"required": False},
+            "date_examen":    {"required": False},
+            "heures_par_jour": {"required": False},
+        }
+
+    def validate_heures_par_jour(self, value):
+        if value < 1 or value > 10:
+            raise serializers.ValidationError("Doit être entre 1 et 10 heures par jour.")
+        return value

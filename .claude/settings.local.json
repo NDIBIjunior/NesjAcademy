@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -v \"\\\\\\\\.git\\\\|build\\\\|\\\\\\\\.\\\\\\(dart_tool\\\\|idea\\\\\\)\")"
+      "Bash(grep -v \"\\\\\\\\.git\\\\|build\\\\|\\\\\\\\.\\\\\\(dart_tool\\\\|idea\\\\\\)\")",
+      "Bash(flutter analyze *)",
+      "Bash(flutter pub *)",
+      "PowerShell(Get-Process *)",
+      "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python manage.py check 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python -c \"import django; django.setup\\(\\); from django.urls import reverse; print\\(reverse\\('auth-profil'\\)\\); print\\(reverse\\('auth-profil-complet'\\)\\)\" 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; $env:DJANGO_SETTINGS_MODULE = \"config.settings\"; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python -c \"import django; django.setup\\(\\); from django.urls import reverse; print\\(reverse\\('auth-profil'\\)\\); print\\(reverse\\('auth-profil-complet'\\)\\)\" 2>&1)"
     ]
   }
 }

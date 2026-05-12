@@ -7,6 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import (
     ConnexionSerializer,
     InscriptionSerializer,
+    ProfilModificationSerializer,
     ProfilSerializer,
     VerifierTelephoneSerializer,
     normaliser_telephone,
@@ -188,13 +189,82 @@ class ConnexionView(APIView):
 
 class ProfilView(APIView):
     """
-    GET /api/auth/profil/
-
-    Nécessite : Authorization: Bearer <access_token>
+    GET   /api/auth/profil/  → lecture complète
+    PATCH /api/auth/profil/  → mise à jour partielle (nom, prenom, ville, etablissement, sexe, age, date_examen, heures_par_jour)
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        serializer = ProfilSerializer(request.user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(ProfilSerializer(request.user).data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        ser = ProfilModificationSerializer(
+            request.user, data=request.data, partial=True
+        )
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        ser.save()
+        return Response(ProfilSerializer(request.user).data, status=status.HTTP_200_OK)
+
+
+class VueProfilComplet(APIView):
+    """
+    GET /api/auth/profil/complet/
+
+    Agrège en un seul appel :
+      - profil         : données de base de l'utilisateur
+      - objectifs      : note cible par matière
+      - disponibilite  : jours/heures disponibles (null si non renseigné)
+      - resultats_diagnostic : dernier score par matière
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from applications.diagnostic.models import ResultatDiagnostic
+        from applications.planning.models import DisponibiliteEleve, ObjectifMatiere
+        from applications.planning.serializers import DisponibiliteEleveSerializer
+
+        eleve = request.user
+
+        # ── Objectifs ──────────────────────────────────────────────────────────
+        objectifs = [
+            {
+                "matiere_id":  obj.matiere.id,
+                "matiere_nom": obj.matiere.nom,
+                "coefficient": float(obj.matiere.coefficient_minesec),
+                "note_cible":  float(obj.note_cible),
+            }
+            for obj in ObjectifMatiere.objects.filter(eleve=eleve).select_related("matiere")
+        ]
+
+        # ── Disponibilités ─────────────────────────────────────────────────────
+        try:
+            dispo = DisponibiliteEleve.objects.get(eleve=eleve)
+            disponibilite = DisponibiliteEleveSerializer(dispo).data
+        except DisponibiliteEleve.DoesNotExist:
+            disponibilite = None
+
+        # ── Résultats diagnostic (plus récent par matière) ─────────────────────
+        vus, resultats = set(), []
+        for r in (
+            ResultatDiagnostic.objects
+            .filter(eleve=eleve)
+            .select_related("matiere")
+            .order_by("matiere_id", "-date_diagnostic")
+        ):
+            if r.matiere_id not in vus:
+                vus.add(r.matiere_id)
+                resultats.append({
+                    "matiere_nom":     r.matiere.nom,
+                    "note_obtenue":    float(r.note_obtenue),
+                    "date_diagnostic": r.date_diagnostic.date().isoformat(),
+                })
+
+        return Response({
+            "profil":               ProfilSerializer(eleve).data,
+            "objectifs":            objectifs,
+            "disponibilite":        disponibilite,
+            "resultats_diagnostic": resultats,
+        })

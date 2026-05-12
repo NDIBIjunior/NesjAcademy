@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   cupertino_icons: ^1.0.8
 
@@ -41,6 +43,15 @@ dependencies:
 
   # Stockage local du token JWT et du profil entre les sessions
   shared_preferences: ^2.3.3
+
+  # Effet shimmer sur les squelettes de chargement
+  shimmer: ^3.0.0
+
+  # Graphiques (barres par matière sur l'écran Progrès)
+  fl_chart: ^0.68.0
+
+  # Typographie premium — PlusJakartaSans (design system v2)
+  google_fonts: ^6.1.0
 
 dev_dependencies:
   flutter_test:
