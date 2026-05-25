@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import DisponibiliteEleve, Matiere, ObjectifMatiere
+from .models import CoursHebdomadaire, DisponibiliteEleve, Matiere, ObjectifMatiere, TrancheHoraire
 
 
 class MatiereResumeSerializer(serializers.ModelSerializer):
@@ -44,15 +44,35 @@ class ObjectifMatiereSerializer(serializers.ModelSerializer):
         fields = ["id", "matiere", "note_cible"]
 
 
+class TrancheHoraireSerializer(serializers.ModelSerializer):
+    """Sérialise une tranche horaire — duree_minutes est calculée, en lecture seule."""
+
+    duree_minutes = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = TrancheHoraire
+        fields = ['id', 'jour', 'heure_debut', 'heure_fin', 'duree_minutes']
+        read_only_fields = ['id', 'duree_minutes']
+
+    def get_duree_minutes(self, obj):
+        return obj.duree_minutes
+
+
 class DisponibiliteEleveSerializer(serializers.ModelSerializer):
     """
     Lecture et écriture des disponibilités d'un élève.
-    Les propriétés calculées (total_heures_semaine, jours_disponibles)
+    Les propriétés calculées (total_heures_semaine, jours_disponibles, tranches)
     sont en lecture seule — calculées automatiquement par le modèle.
     """
 
     total_heures_semaine = serializers.ReadOnlyField()
     jours_disponibles    = serializers.ReadOnlyField()
+    tranches             = serializers.SerializerMethodField()
+
+    def get_tranches(self, obj):
+        if obj.pk is None:
+            return []
+        return TrancheHoraireSerializer(obj.tranches.all(), many=True).data
 
     class Meta:
         model = DisponibiliteEleve
@@ -69,5 +89,17 @@ class DisponibiliteEleveSerializer(serializers.ModelSerializer):
             # Calculés
             "total_heures_semaine", "jours_disponibles",
             "date_mise_a_jour",
+            # Tranches horaires précises
+            "tranches",
         ]
         read_only_fields = ["id", "date_mise_a_jour"]
+
+
+class CoursHebdomadaireItemSerializer(serializers.Serializer):
+    """
+    Valide un item de la liste POST /emploi-du-temps/.
+    Corps attendu : { "matiere_id": 3, "jour": "lundi" }
+    """
+
+    matiere_id = serializers.PrimaryKeyRelatedField(queryset=Matiere.objects.all())
+    jour       = serializers.ChoiceField(choices=CoursHebdomadaire.JOURS)

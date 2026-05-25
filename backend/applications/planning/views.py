@@ -13,18 +13,23 @@ from .algorithme import GenerateurPlan, RevisionEspacee
 from .conseiller import ConseillerDisponibilite
 from .models import (
     Chapitre,
+    CoursHebdomadaire,
     DisponibiliteEleve,
     Matiere,
     ObjectifMatiere,
     PlanEtude,
+    PositionProgramme,
     ProgressionChapitre,
     SessionEtude,
+    TrancheHoraire,
 )
 from .serializers import (
+    CoursHebdomadaireItemSerializer,
     DisponibiliteEleveSerializer,
     ItemObjectifSerializer,
     MatiereResumeSerializer,
     ObjectifMatiereSerializer,
+    TrancheHoraireSerializer,
 )
 
 
@@ -34,19 +39,30 @@ from .serializers import (
 
 def _serialiser_session(session):
     """Dict JSON d'une SessionEtude — utilisé dans toutes les réponses."""
+    tranche = None
+    if getattr(session, 'tranche_horaire_id', None):
+        t = session.tranche_horaire
+        tranche = {
+            "heure_debut":   t.heure_debut.strftime('%H:%M'),
+            "heure_fin":     t.heure_fin.strftime('%H:%M'),
+            "duree_minutes": t.duree_minutes,
+        }
     return {
         "id":             session.id,
         "chapitre": {
-            "id":           session.chapitre.id,
-            "titre":        session.chapitre.titre,
-            "matiere_nom":  session.chapitre.matiere.nom,
-            "matiere_id":   session.chapitre.matiere_id,
-            "coefficient":  float(session.chapitre.matiere.coefficient_minesec),
+            "id":                  session.chapitre.id,
+            "titre":               session.chapitre.titre,
+            "matiere_nom":         session.chapitre.matiere.nom,
+            "matiere_id":          session.chapitre.matiere_id,
+            "coefficient":         float(session.chapitre.matiere.coefficient_minesec),
+            "necessite_exercices": session.chapitre.matiere.necessite_exercices,
         },
-        "duree_minutes": session.duree_minutes,
-        "type_session":  session.type_session,
-        "completee":     session.completee,
-        "date_prevue":   session.date_prevue.isoformat(),
+        "duree_minutes":   session.duree_minutes,
+        "type_session":    session.type_session,
+        "completee":       session.completee,
+        "est_optionnelle": session.est_optionnelle,
+        "date_prevue":     session.date_prevue.isoformat(),
+        "tranche":         tranche,
     }
 
 
@@ -197,15 +213,44 @@ class VueDisponibilite(APIView):
         return Response(DisponibiliteEleveSerializer(dispo).data)
 
     def post(self, request):
-        ser = DisponibiliteEleveSerializer(data=request.data)
+        tranches_data = request.data.get('tranches')
+
+        # Valider les champs de disponibilité (sans tranches)
+        dispo_data = {k: v for k, v in request.data.items() if k != 'tranches'}
+        ser = DisponibiliteEleveSerializer(data=dispo_data)
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Valider les tranches si fournies
+        tranches_valides = None
+        if tranches_data is not None:
+            if not isinstance(tranches_data, list):
+                return Response(
+                    {'tranches': 'Doit être une liste de créneaux.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            tranche_ser = TrancheHoraireSerializer(data=tranches_data, many=True)
+            if not tranche_ser.is_valid():
+                return Response(
+                    {'tranches': tranche_ser.errors},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            tranches_valides = tranche_ser.validated_data
 
         eleve = request.user
         dispo, _ = DisponibiliteEleve.objects.update_or_create(
             eleve=eleve,
             defaults=ser.validated_data,
         )
+
+        # Remplacer toutes les tranches si une liste est fournie
+        if tranches_valides is not None:
+            dispo.tranches.all().delete()
+            TrancheHoraire.objects.bulk_create([
+                TrancheHoraire(disponibilite=dispo, **t)
+                for t in tranches_valides
+            ])
+
         conseil = ConseillerDisponibilite().analyser(eleve, dispo)
 
         return Response(
@@ -309,8 +354,8 @@ class VuePlanningAujourdhui(APIView):
         sessions = (
             SessionEtude.objects
             .filter(plan=plan, date_prevue=aujourd_hui)
-            .select_related("chapitre__matiere")
-            .order_by("id")
+            .select_related("chapitre__matiere", "tranche_horaire")
+            .order_by("tranche_horaire__heure_debut", "id")
         )
 
         donnees = [_serialiser_session(s) for s in sessions]
@@ -370,8 +415,8 @@ class VuePlanningHebdomadaire(APIView):
         sessions = (
             SessionEtude.objects
             .filter(plan=plan, date_prevue__range=(date_debut, date_fin))
-            .select_related("chapitre__matiere")
-            .order_by("date_prevue", "id")
+            .select_related("chapitre__matiere", "tranche_horaire")
+            .order_by("date_prevue", "tranche_horaire__heure_debut", "id")
         )
 
         # Indexer par date ISO
@@ -410,7 +455,7 @@ class VueCompleterSession(APIView):
         try:
             session = (
                 SessionEtude.objects
-                .select_related("plan__eleve", "chapitre__matiere")
+                .select_related("plan__eleve", "chapitre__matiere", "tranche_horaire")
                 .get(id=id, plan__eleve=request.user)
             )
         except SessionEtude.DoesNotExist:
@@ -426,9 +471,28 @@ class VueCompleterSession(APIView):
             )
 
         # ── Marquer comme complétée ───────────────────────────────────────────
-        session.completee      = True
+        session.completee       = True
         session.date_completion = timezone.now()
         session.save(update_fields=["completee", "date_completion"])
+
+        # Si c'est une session optionnelle, supprimer la copie obligatoire du lendemain
+        # pour éviter que l'élève la voie à nouveau demain
+        if session.est_optionnelle:
+            doublon = (
+                SessionEtude.objects
+                .filter(
+                    plan=session.plan,
+                    chapitre=session.chapitre,
+                    type_session=session.type_session,
+                    est_optionnelle=False,
+                    completee=False,
+                    date_prevue__gt=session.date_prevue,
+                )
+                .order_by("date_prevue")
+                .first()
+            )
+            if doublon:
+                doublon.delete()
 
         # ── Révisions espacées (uniquement pour les découvertes) ─────────────
         nouvelles_revisions = []
@@ -515,7 +579,7 @@ class VueResumePlan(APIView):
             )
 
         aujourd_hui = date.today()
-        sessions    = plan.sessions.select_related("chapitre__matiere")
+        sessions    = plan.sessions.select_related("chapitre__matiere", "tranche_horaire")
 
         total_sessions      = sessions.count()
         sessions_completees = sessions.filter(completee=True).count()
@@ -590,7 +654,7 @@ class VueProgressionDetaillee(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        sessions_qs = plan.sessions.select_related("chapitre__matiere")
+        sessions_qs = plan.sessions.select_related("chapitre__matiere", "tranche_horaire")
 
         # ── Stats globales ─────────────────────────────────────────────────────
         total      = sessions_qs.count()
@@ -719,3 +783,196 @@ class VueProgressionDetaillee(APIView):
             "par_matiere": par_matiere,
             "calendrier":  calendrier,
         })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 7 : Emploi du temps hebdomadaire
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueEmploiDuTemps(APIView):
+    """
+    GET  /api/planning/emploi-du-temps/
+    POST /api/planning/emploi-du-temps/
+
+    L'élève saisit son emploi du temps une seule fois.
+    L'algorithme l'utilise à chaque génération pour placer
+    des révisions immédiates (40 min) après chaque cours.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    _JOURS_ORDRE = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
+
+    def _formater_par_jour(self, eleve):
+        """Retourne le dict {jour: [{matiere_id, matiere_nom, coefficient}]} trié."""
+        emploi = (
+            CoursHebdomadaire.objects
+            .filter(eleve=eleve)
+            .select_related('matiere')
+            .order_by('jour', 'matiere__ordre_affichage')
+        )
+        par_jour = {jour: [] for jour in self._JOURS_ORDRE}
+        for cours in emploi:
+            if cours.jour in par_jour:
+                par_jour[cours.jour].append({
+                    'id':          cours.id,
+                    'matiere_id':  cours.matiere_id,
+                    'matiere_nom': cours.matiere.nom,
+                    'coefficient': cours.matiere.coefficient_minesec,
+                })
+        return par_jour
+
+    def get(self, request):
+        return Response(self._formater_par_jour(request.user))
+
+    def post(self, request):
+        cours_data = request.data.get('cours', [])
+        if not isinstance(cours_data, list):
+            return Response(
+                {'erreur': 'Le champ "cours" doit être une liste.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ser = CoursHebdomadaireItemSerializer(data=cours_data, many=True)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        eleve = request.user
+        ids_autorises = set(
+            Matiere.objects.filter(
+                niveau=eleve.niveau,
+                systeme=eleve.systeme_scolaire,
+            ).values_list('pk', flat=True)
+        )
+        for i, item in enumerate(ser.validated_data):
+            if item['matiere_id'].pk not in ids_autorises:
+                return Response(
+                    {f'cours[{i}]': {'matiere_id': "Cette matière n'appartient pas à votre niveau."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        CoursHebdomadaire.objects.filter(eleve=eleve).delete()
+        CoursHebdomadaire.objects.bulk_create([
+            CoursHebdomadaire(eleve=eleve, matiere=item['matiere_id'], jour=item['jour'])
+            for item in ser.validated_data
+        ])
+
+        return Response(self._formater_par_jour(eleve), status=status.HTTP_200_OK)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 8 : Position dans le programme (une mise à jour par semaine par matière)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VuePositionProgramme(APIView):
+    """
+    GET  /api/planning/position-programme/
+        Retourne pour chaque matière : le chapitre actuel avec le prof,
+        la liste des chapitres disponibles, et si une mise à jour est nécessaire
+        (aucune mise à jour ou dernière mise à jour > 7 jours).
+
+    POST /api/planning/position-programme/
+        Corps : { "matiere_id": 1, "chapitre_id": 3 }
+        Met à jour la position et synchronise ProgressionChapitre :
+          - chapitres avant le chapitre actuel → EN_COURS
+          - chapitre actuel                   → EN_COURS
+          - chapitres après                   → PAS_VU (non vus encore)
+    """
+
+    permission_classes = [IsAuthenticated]
+    DELAI_SEMAINE = timedelta(days=7)
+
+    def _besoin_mise_a_jour(self, position):
+        if position is None:
+            return True
+        age = date.today() - position.date_mise_a_jour.date()
+        return age >= self.DELAI_SEMAINE
+
+    def get(self, request):
+        eleve    = request.user
+        matieres = Matiere.objects.filter(
+            niveau=eleve.niveau, systeme=eleve.systeme_scolaire or 'FR'
+        ).prefetch_related('chapitres')
+
+        positions = {
+            p.matiere_id: p
+            for p in PositionProgramme.objects.filter(eleve=eleve)
+            .select_related('chapitre_actuel')
+        }
+
+        donnees = []
+        for mat in matieres:
+            chapitres = list(mat.chapitres.order_by('ordre'))
+            if not chapitres:
+                continue
+            pos = positions.get(mat.id)
+            donnees.append({
+                "matiere_id":        mat.id,
+                "matiere_nom":       mat.nom,
+                "besoin_mise_a_jour": self._besoin_mise_a_jour(pos),
+                "date_mise_a_jour":  pos.date_mise_a_jour.date().isoformat() if pos else None,
+                "chapitre_actuel":   {
+                    "id":    pos.chapitre_actuel.id,
+                    "titre": pos.chapitre_actuel.titre,
+                    "ordre": pos.chapitre_actuel.ordre,
+                } if pos and pos.chapitre_actuel else None,
+                "chapitres": [
+                    {"id": c.id, "titre": c.titre, "ordre": c.ordre}
+                    for c in chapitres
+                ],
+            })
+
+        return Response(donnees)
+
+    def post(self, request):
+        matiere_id  = request.data.get('matiere_id')
+        chapitre_id = request.data.get('chapitre_id')
+
+        if not matiere_id or not chapitre_id:
+            return Response(
+                {"erreur": "Les champs matiere_id et chapitre_id sont obligatoires."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        eleve = request.user
+
+        try:
+            matiere  = Matiere.objects.get(id=matiere_id, niveau=eleve.niveau)
+            chapitre = Chapitre.objects.get(id=chapitre_id, matiere=matiere)
+        except (Matiere.DoesNotExist, Chapitre.DoesNotExist):
+            return Response(
+                {"erreur": "Matière ou chapitre introuvable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Sauvegarder la position
+        PositionProgramme.objects.update_or_create(
+            eleve=eleve,
+            matiere=matiere,
+            defaults={'chapitre_actuel': chapitre},
+        )
+
+        # Synchroniser ProgressionChapitre pour tous les chapitres de la matière
+        tous_chapitres = Chapitre.objects.filter(matiere=matiere)
+        for chap in tous_chapitres:
+            if chap.ordre <= chapitre.ordre:
+                # Vu avec le prof (en cours ou déjà vu)
+                statut_cible = ProgressionChapitre.EN_COURS
+            else:
+                # Pas encore vu avec le prof
+                statut_cible = ProgressionChapitre.PAS_VU
+
+            prog, cree = ProgressionChapitre.objects.get_or_create(
+                eleve=eleve,
+                chapitre=chap,
+                defaults={'statut': statut_cible},
+            )
+            if not cree and prog.statut != ProgressionChapitre.MAITRISE:
+                # Ne pas rétrograder un chapitre déjà maîtrisé
+                prog.statut = statut_cible
+                prog.save(update_fields=['statut'])
+
+        return Response(
+            {"message": f"Position mise à jour : {chapitre.titre}"},
+            status=status.HTTP_200_OK,
+        )

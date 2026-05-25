@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Exception : ne pas ignorer le code source Flutter
+!mobile/lib/
 parts/
 sdist/
 var/

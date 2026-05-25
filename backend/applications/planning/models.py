@@ -40,6 +40,18 @@ class Matiere(models.Model):
         default=True,
         help_text="False = matière secondaire, niveau fixé automatiquement à 10/20",
     )
+    necessite_exercices = models.BooleanField(
+        default=False,
+        help_text="True = l'algorithme génère 2 sessions par chapitre : lecture puis exercices",
+    )
+    duree_lecture_minutes = models.PositiveSmallIntegerField(
+        default=60,
+        help_text="Durée de la session de lecture/cours (en minutes)",
+    )
+    duree_exercices_minutes = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Durée de la session d'exercices (en minutes, 0 si pas d'exercices)",
+    )
     ordre_affichage = models.PositiveSmallIntegerField(
         default=0,
         help_text="Ordre d'affichage dans l'application (plus petit = en premier)",
@@ -149,17 +161,19 @@ class SessionEtude(models.Model):
     """Session de travail quotidienne planifiée par l'algorithme de révision espacée."""
 
     # Révision espacée : J+1, J+3, J+7, J+14 après la session de découverte
-    DECOUVERTE = "decouverte"
-    REVISION_J1 = "revision_j1"
-    REVISION_J3 = "revision_j3"
-    REVISION_J7 = "revision_j7"
-    REVISION_J14 = "revision_j14"
+    DECOUVERTE         = "decouverte"
+    REVISION_IMMEDIATE = "revision_immediate"
+    REVISION_J1        = "revision_j1"
+    REVISION_J3        = "revision_j3"
+    REVISION_J7        = "revision_j7"
+    REVISION_J14       = "revision_j14"
     TYPES_SESSION = [
-        (DECOUVERTE, "Découverte"),
-        (REVISION_J1, "Révision J+1"),
-        (REVISION_J3, "Révision J+3"),
-        (REVISION_J7, "Révision J+7"),
-        (REVISION_J14, "Révision J+14"),
+        (DECOUVERTE,         "Découverte"),
+        (REVISION_IMMEDIATE, "Révision immédiate"),
+        (REVISION_J1,        "Révision J+1"),
+        (REVISION_J3,        "Révision J+3"),
+        (REVISION_J7,        "Révision J+7"),
+        (REVISION_J14,       "Révision J+14"),
     ]
 
     plan = models.ForeignKey(
@@ -177,7 +191,7 @@ class SessionEtude(models.Model):
         help_text="Durée calculée par l'algorithme selon heures_par_jour de l'élève",
     )
     type_session = models.CharField(
-        max_length=15,
+        max_length=20,
         choices=TYPES_SESSION,
         default=DECOUVERTE,
     )
@@ -186,6 +200,16 @@ class SessionEtude(models.Model):
         null=True,
         blank=True,
         help_text="Remplie automatiquement quand l'élève marque la session comme terminée",
+    )
+    est_optionnelle = models.BooleanField(
+        default=False,
+        help_text="Session bonus suggérée si l'élève a du temps libre — non obligatoire",
+    )
+    tranche_horaire = models.ForeignKey(
+        'TrancheHoraire',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sessions_prevues',
     )
 
     class Meta:
@@ -303,3 +327,130 @@ class DisponibiliteEleve(models.Model):
             ('dimanche', self.dimanche_dispo),
         ]
         return [nom for nom, dispo in correspondance if dispo]
+
+
+class TrancheHoraire(models.Model):
+    """Créneau horaire précis dans la semaine d'un élève."""
+
+    JOURS = [
+        ('lundi',    'Lundi'),
+        ('mardi',    'Mardi'),
+        ('mercredi', 'Mercredi'),
+        ('jeudi',    'Jeudi'),
+        ('vendredi', 'Vendredi'),
+        ('samedi',   'Samedi'),
+        ('dimanche', 'Dimanche'),
+    ]
+
+    disponibilite = models.ForeignKey(
+        DisponibiliteEleve,
+        on_delete=models.CASCADE,
+        related_name='tranches',
+    )
+    jour        = models.CharField(max_length=9, choices=JOURS)
+    heure_debut = models.TimeField()
+    heure_fin   = models.TimeField()
+
+    class Meta:
+        verbose_name        = 'Tranche horaire'
+        verbose_name_plural = 'Tranches horaires'
+        ordering            = ['jour', 'heure_debut']
+
+    @property
+    def duree_minutes(self):
+        """Durée en minutes — gère le cas d'un créneau passant minuit."""
+        debut = datetime.datetime.combine(datetime.date.today(), self.heure_debut)
+        fin   = datetime.datetime.combine(datetime.date.today(), self.heure_fin)
+        if fin <= debut:
+            fin += datetime.timedelta(days=1)
+        return int((fin - debut).total_seconds() // 60)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        d = self.duree_minutes
+        if d < 30 or d > 240:
+            raise ValidationError(
+                f'La durée doit être entre 30 min et 4h (actuellement {d} min).'
+            )
+
+    def __str__(self):
+        return (
+            f"{self.get_jour_display()} {self.heure_debut}–{self.heure_fin}"
+            f" ({self.duree_minutes} min)"
+        )
+
+
+class PositionProgramme(models.Model):
+    """
+    Position actuelle de l'élève dans le programme de chaque matière,
+    telle qu'indiquée par son professeur.
+    Mise à jour une fois par semaine par l'élève.
+    """
+
+    eleve = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='positions_programme',
+        limit_choices_to={'role': 'eleve'},
+    )
+    matiere = models.ForeignKey(
+        Matiere,
+        on_delete=models.CASCADE,
+        related_name='positions_programme',
+    )
+    chapitre_actuel = models.ForeignKey(
+        'Chapitre',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='positions_actuelles',
+        help_text="Chapitre en cours avec le professeur cette semaine",
+    )
+    date_mise_a_jour = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Position Programme"
+        verbose_name_plural = "Positions Programme"
+        unique_together     = ('eleve', 'matiere')
+
+    def __str__(self):
+        chap = self.chapitre_actuel.titre if self.chapitre_actuel else "non défini"
+        return f"{self.eleve} — {self.matiere.nom} : {chap}"
+
+
+class CoursHebdomadaire(models.Model):
+    """
+    Emploi du temps fixe de l'élève au lycée.
+    Saisi une fois, utilisé par l'algorithme à chaque génération de planning
+    pour placer des révisions immédiates après chaque cours.
+    """
+
+    JOURS = [
+        ('lundi',    'Lundi'),
+        ('mardi',    'Mardi'),
+        ('mercredi', 'Mercredi'),
+        ('jeudi',    'Jeudi'),
+        ('vendredi', 'Vendredi'),
+        ('samedi',   'Samedi'),
+    ]
+
+    eleve = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='emploi_du_temps',
+        limit_choices_to={'role': 'eleve'},
+    )
+    matiere = models.ForeignKey(
+        Matiere,
+        on_delete=models.CASCADE,
+        related_name='cours_hebdomadaires',
+    )
+    jour = models.CharField(max_length=9, choices=JOURS)
+
+    class Meta:
+        verbose_name        = "Cours Hebdomadaire"
+        verbose_name_plural = "Emploi du Temps"
+        unique_together     = ('eleve', 'matiere', 'jour')
+        ordering            = ['jour', 'matiere']
+
+    def __str__(self):
+        return f"{self.eleve} — {self.matiere.nom} le {self.get_jour_display()}"
