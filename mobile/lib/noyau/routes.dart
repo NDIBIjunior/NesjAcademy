@@ -16,17 +16,14 @@ abstract class Routes {
   // Objectifs
   static const String objectifs            = '/objectifs';
 
-  // Diagnostic
-  static const String bienvenue            = '/bienvenue';
-  static const String diagnostic           = '/diagnostic';
-  static const String resultatsDiagnostic  = '/diagnostic/resultats';
+  // Génération du planning (dernière étape de l'onboarding)
+  static const String resultatsDiagnostic  = '/generation';
 
   // Disponibilité
-  static const String disponibilite          = '/disponibilite';
-  static const String conseilDisponibilite   = '/disponibilite/conseil';
+  static const String disponibilite        = '/disponibilite';
 
-  // Emploi du temps
-  static const String emploiDuTemps          = '/emploi-du-temps';
+  // Emploi du temps lycée (cours par jour → révisions immédiates)
+  static const String emploiDuTemps        = '/emploi-du-temps';
 
   // Analytique
   static const String analytique        = '/analytique';

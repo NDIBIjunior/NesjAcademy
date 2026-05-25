@@ -5,6 +5,7 @@ from .views import (
     VueDisponibilite,
     VueEmploiDuTemps,
     VueGenererPlan,
+    VueMatieres,
     VueObjectifsEleve,
     VuePlanningAujourdhui,
     VuePlanningHebdomadaire,
@@ -14,6 +15,9 @@ from .views import (
 )
 
 urlpatterns = [
+    # Liste des matières (pour la sélection du créneau principal)
+    path("matieres/",         VueMatieres.as_view(),         name="planning-matieres"),
+
     # Objectifs, disponibilités et emploi du temps (collecte avant génération)
     path("objectifs/",        VueObjectifsEleve.as_view(),   name="planning-objectifs"),
     path("disponibilite/",    VueDisponibilite.as_view(),    name="planning-disponibilite"),

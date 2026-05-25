@@ -136,7 +136,7 @@ class _EcranBienvenueState extends State<EcranBienvenue> {
                       child: ElevatedButton(
                         onPressed: () => Navigator.pushReplacementNamed(
                           context,
-                          Routes.diagnostic,
+                          Routes.objectifs,
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: CouleurApp.bleuPrincipal,

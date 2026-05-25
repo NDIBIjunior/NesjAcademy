@@ -115,7 +115,7 @@ class EcranConseilDisponibilite extends StatelessWidget {
                 height: 54,
                 child: ElevatedButton.icon(
                   onPressed: () => Navigator.pushReplacementNamed(
-                    context, Routes.emploiDuTemps),
+                    context, Routes.resultatsDiagnostic),
                   icon: const Icon(Icons.calendar_today_rounded),
                   label: const Text('Mon emploi du temps →'),
                 ),

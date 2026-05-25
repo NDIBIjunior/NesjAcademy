@@ -10,53 +10,97 @@ import '../../noyau/constantes.dart';
 import '../../noyau/routes.dart';
 import '../../noyau/theme.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Écran de génération finale du planning
+// Affiche un récap des paramètres configurés et lance la génération.
+// ─────────────────────────────────────────────────────────────────────────────
 class EcranResultatDiagnostic extends StatefulWidget {
   const EcranResultatDiagnostic({super.key});
 
   @override
-  State<EcranResultatDiagnostic> createState() => _EcranResultatDiagnosticState();
+  State<EcranResultatDiagnostic> createState() =>
+      _EcranResultatDiagnosticState();
 }
 
 class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
   bool _chargement = true;
   bool _generationEnCours = false;
   String? _erreur;
-  List<dynamic> _resultats = [];
+
+  // Données du récap
+  List<Map<String, dynamic>> _objectifs = [];
+  int _budgetMinutes = 0;
+  String _preference = 'soir';
 
   @override
   void initState() {
     super.initState();
-    _chargerResultats();
+    _chargerRecap();
   }
 
-  Future<void> _chargerResultats() async {
+  Future<http.Response> _getAuth(String url) async {
+    final token = await StockageLocal.lireTokenAcces();
+    return http.get(
+      Uri.parse(url),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      },
+    ).timeout(Constantes.dureeRequete);
+  }
+
+  Future<void> _chargerRecap() async {
     setState(() { _chargement = true; _erreur = null; });
     try {
-      final token = await StockageLocal.lireTokenAcces();
-      final reponse = await http.get(
-        Uri.parse(Constantes.urlResultats),
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
-      ).timeout(Constantes.dureeRequete);
+      // Charger objectifs et disponibilité en parallèle
+      final futures = await Future.wait([
+        _getAuth(Constantes.urlObjectifs),
+        _getAuth(Constantes.urlDisponibilite),
+      ]);
 
-      if (reponse.statusCode >= 400) {
-        final corps = jsonDecode(utf8.decode(reponse.bodyBytes)) as Map<String, dynamic>;
-        throw Exception(corps['detail'] ?? 'Erreur serveur');
+      final repObj  = futures[0];
+      final repDispo = futures[1];
+
+      List<Map<String, dynamic>> objectifs = [];
+      if (repObj.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(repObj.bodyBytes));
+        if (data is Map && data.containsKey('objectifs')) {
+          objectifs = (data['objectifs'] as List)
+              .map((o) => o as Map<String, dynamic>)
+              .toList();
+        } else if (data is List) {
+          objectifs = data.map((o) => o as Map<String, dynamic>).toList();
+        }
       }
 
-      final liste = jsonDecode(utf8.decode(reponse.bodyBytes)) as List<dynamic>;
-      setState(() { _resultats = liste; _chargement = false; });
+      int budget = 0;
+      String preference = 'soir';
+      if (repDispo.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(repDispo.bodyBytes));
+        if (data is Map) {
+          preference = (data['preference_etude'] as String?) ?? 'soir';
+          final tranches = (data['tranches'] as List?) ?? [];
+          for (final t in tranches) {
+            budget += (t['duree_minutes'] as int? ?? 0);
+          }
+        }
+      }
+
+      setState(() {
+        _objectifs      = objectifs;
+        _budgetMinutes  = budget;
+        _preference     = preference;
+        _chargement     = false;
+      });
     } catch (e) {
       setState(() {
-        _erreur = e.toString().replaceFirst('Exception: ', '');
+        _erreur     = e.toString().replaceFirst('Exception: ', '');
         _chargement = false;
       });
     }
   }
 
-  Future<void> _genererEtNaviguer() async {
+  Future<void> _generer() async {
     setState(() => _generationEnCours = true);
     try {
       final rep = await ClientApi.post(
@@ -67,7 +111,6 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
       if (!mounted) return;
 
       if (rep.statusCode == 200 || rep.statusCode == 201) {
-        // Vider toute la pile d'onboarding et aller directement à l'accueil
         Navigator.pushNamedAndRemoveUntil(
           context,
           Routes.accueil,
@@ -76,24 +119,30 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
         return;
       }
 
-      // Erreur API : afficher le message Django dans un dialog visible
       String msg;
       try {
-        final corps = jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>;
-        msg = (corps['erreur'] ?? corps['detail'] ?? 'Erreur ${rep.statusCode}').toString();
+        final corps =
+            jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>;
+        msg = (corps['erreur'] ?? corps['detail'] ?? 'Erreur ${rep.statusCode}')
+            .toString();
       } catch (_) {
         msg = 'Erreur ${rep.statusCode} — réponse inattendue du serveur.';
       }
+
       await showDialog(
         context: context,
         builder: (_) => AlertDialog(
           title: const Text('Planning non généré'),
           content: Text(msg),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
         ),
       );
       if (mounted) setState(() => _generationEnCours = false);
-
     } catch (e) {
       if (!mounted) return;
       await showDialog(
@@ -101,33 +150,38 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
         builder: (_) => AlertDialog(
           title: const Text('Erreur de connexion'),
           content: Text('Impossible de contacter le serveur.\n\nDétail : $e'),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
         ),
       );
       if (mounted) setState(() => _generationEnCours = false);
     }
   }
 
-  // Message de synthèse du professeur selon la performance globale
-  String get _messageProfesseur {
-    if (_resultats.isEmpty) return 'Voici les résultats de ton évaluation !';
-    double total = 0;
-    for (final r in _resultats) {
-      total += double.parse(r['note_obtenue'].toString());
-    }
-    final moyenne = total / _resultats.length;
-    if (moyenne >= 14) {
-      return 'Félicitations ! Tu as un excellent niveau. '
-          'Ton planning va être optimisé pour te préparer au mieux à l\'examen.';
-    } else if (moyenne >= 10) {
-      return 'Bon travail ! Tu as des bases solides. '
-          'On va travailler ensemble sur les matières où tu peux progresser.';
-    } else {
-      return 'Pas de panique ! Ces résultats me permettent de créer '
-          'un planning personnalisé pour que tu progresses rapidement.';
-    }
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  String get _budgetFormate {
+    final h = _budgetMinutes ~/ 60;
+    final m = _budgetMinutes % 60;
+    if (m == 0) return '${h}h de travail/semaine';
+    return '${h}h${m.toString().padLeft(2, '0')} de travail/semaine';
   }
 
+  String get _messageProf {
+    final nb = _objectifs.length;
+    if (nb == 0) {
+      return 'Tout est prêt ! Je vais maintenant créer ton planning '
+          'personnalisé en fonction de tes disponibilités.';
+    }
+    return 'Parfait ! J\'ai analysé tes $nb matières et ton emploi du temps. '
+        'Je suis prêt à créer un planning optimisé pour toi !';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -137,7 +191,7 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
         foregroundColor: Colors.white,
         automaticallyImplyLeading: false,
         centerTitle: true,
-        title: const Text('Résultats du diagnostic'),
+        title: const Text('Générer mon planning'),
       ),
       body: SafeArea(child: _buildCorps()),
     );
@@ -151,7 +205,7 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
           children: [
             CircularProgressIndicator(color: CouleurApp.bleuPrincipal),
             SizedBox(height: 16),
-            Text('Calcul de tes résultats…',
+            Text('Chargement du récapitulatif…',
                 style: TextStyle(color: CouleurApp.texteGris)),
           ],
         ),
@@ -173,7 +227,7 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
                   style: const TextStyle(color: CouleurApp.texteGris)),
               const SizedBox(height: 24),
               ElevatedButton.icon(
-                onPressed: _chargerResultats,
+                onPressed: _chargerRecap,
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Réessayer'),
               ),
@@ -188,48 +242,123 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── Professeur ──────────────────────────────────────────────────
+          // ── Message professeur ───────────────────────────────────────────
           GuideProfesseur(
-            message: _messageProfesseur,
-            vitesseEcriture: const Duration(milliseconds: 30),
+            message: _messageProf,
+            vitesseEcriture: const Duration(milliseconds: 28),
           ),
           const SizedBox(height: 24),
 
-          // ── Titre section ───────────────────────────────────────────────
+          // ── Titre ────────────────────────────────────────────────────────
           const Text(
-            'Ton profil de niveau',
+            'Récapitulatif de ta configuration',
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 17,
               fontWeight: FontWeight.bold,
               color: CouleurApp.bleuSombre,
             ),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'Basé sur tes réponses au quiz diagnostic',
-            style: TextStyle(color: CouleurApp.texteGris, fontSize: 13),
-          ),
           const SizedBox(height: 16),
 
-          // ── Cartes résultat par matière ─────────────────────────────────
-          ..._resultats.map((r) => _CarteResultat(resultat: r as Map<String, dynamic>)),
+          // ── Carte : matières et difficultés ──────────────────────────────
+          if (_objectifs.isNotEmpty) ...[
+            _CarteRecap(
+              icone: Icons.book_rounded,
+              couleur: CouleurApp.bleuPrincipal,
+              titre: '${_objectifs.length} matière${_objectifs.length > 1 ? 's' : ''} configurée${_objectifs.length > 1 ? 's' : ''}',
+              contenu: Column(
+                children: _objectifs.map((obj) {
+                  final nom     = (obj['matiere']?['nom'] ?? obj['matiere_nom'] ?? '?') as String;
+                  final coeff   = obj['matiere']?['coefficient_minesec'] ?? obj['coefficient'] ?? 0;
+                  final diff    = obj['niveau_difficulte'] as int? ?? 2;
+                  return _LigneMatiere(nom: nom, coefficient: coeff as int, difficulte: diff);
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
 
+          // ── Carte : budget temps ─────────────────────────────────────────
+          if (_budgetMinutes > 0) ...[
+            _CarteRecap(
+              icone: Icons.schedule_rounded,
+              couleur: const Color(0xFF059669),
+              titre: _budgetFormate,
+              contenu: Text(
+                'Réparti automatiquement selon le poids de chaque matière',
+                style: const TextStyle(
+                  color: CouleurApp.texteGris,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
+
+          // ── Carte : préférence ───────────────────────────────────────────
+          _CarteRecap(
+            icone: _preference == 'matin'
+                ? Icons.wb_sunny_rounded
+                : Icons.nights_stay_rounded,
+            couleur: _preference == 'matin'
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFF6366F1),
+            titre: _preference == 'matin'
+                ? 'Tu préfères étudier le matin'
+                : 'Tu préfères étudier le soir',
+            contenu: Text(
+              'Les matières les plus difficiles seront placées '
+              'dans tes créneaux ${_preference == 'matin' ? 'matinaux' : 'du soir'}.',
+              style: const TextStyle(
+                color: CouleurApp.texteGris,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
           const SizedBox(height: 32),
 
-          // ── Bouton créer le planning ─────────────────────────────────────
+          // ── Bouton générer ───────────────────────────────────────────────
           SizedBox(
-            height: 54,
+            height: 56,
             child: ElevatedButton.icon(
-              onPressed: _generationEnCours ? null : _genererEtNaviguer,
+              onPressed: _generationEnCours ? null : _generer,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: CouleurApp.bleuPrincipal,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               icon: _generationEnCours
                   ? const SizedBox(
-                      width: 20, height: 20,
+                      width: 20,
+                      height: 20,
                       child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2.5))
-                  : const Icon(Icons.calendar_today_rounded),
+                        color: Colors.white,
+                        strokeWidth: 2.5,
+                      ),
+                    )
+                  : const Icon(Icons.auto_awesome_rounded),
               label: Text(_generationEnCours
                   ? 'Génération en cours…'
                   : 'Créer mon planning personnalisé →'),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // ── Lien retour ──────────────────────────────────────────────────
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              '← Modifier mes disponibilités',
+              style: TextStyle(color: CouleurApp.texteGris),
             ),
           ),
         ],
@@ -239,50 +368,32 @@ class _EcranResultatDiagnosticState extends State<EcranResultatDiagnostic> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Carte résultat pour une matière
+// Carte récap générique
 // ─────────────────────────────────────────────────────────────────────────────
-class _CarteResultat extends StatelessWidget {
-  final Map<String, dynamic> resultat;
+class _CarteRecap extends StatelessWidget {
+  final IconData icone;
+  final Color couleur;
+  final String titre;
+  final Widget contenu;
 
-  const _CarteResultat({required this.resultat});
+  const _CarteRecap({
+    required this.icone,
+    required this.couleur,
+    required this.titre,
+    required this.contenu,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final matiere   = resultat['matiere'] as Map<String, dynamic>;
-    final nom       = matiere['nom'] as String;
-    final coeff     = matiere['coefficient_minesec'] as int;
-    // note_obtenue est un DecimalField → DRF le sérialise en String ("12.5")
-    final note      = double.parse(resultat['note_obtenue'].toString());
-    final noteCible = double.parse(resultat['note_cible'].toString());
-    final priorite  = double.parse(resultat['priorite'].toString());
-
-    // Couleur selon performance
-    final Color couleurNote;
-    final String emoji;
-    if (note >= 14) {
-      couleurNote = CouleurApp.succesVert;
-      emoji = '✅';
-    } else if (note >= 10) {
-      couleurNote = const Color(0xFFF59E0B);
-      emoji = '⚡';
-    } else {
-      couleurNote = CouleurApp.erreur;
-      emoji = '📚';
-    }
-
-    // Ratio pour la barre de progression de la note
-    final ratioNote = (note / 20.0).clamp(0.0, 1.0);
-
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: CouleurApp.fondBlanc,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: CouleurApp.bordure),
+        border: Border.all(color: couleur.withValues(alpha: 0.25)),
         boxShadow: [
           BoxShadow(
-            color: CouleurApp.bleuSombre.withOpacity(0.05),
+            color: CouleurApp.bleuSombre.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -291,112 +402,123 @@ class _CarteResultat extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── En-tête : nom matière + note ──────────────────────────────
           Row(
             children: [
-              Text(emoji, style: const TextStyle(fontSize: 20)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      nom,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: CouleurApp.bleuSombre,
-                      ),
-                    ),
-                    Text(
-                      'Coeff. $coeff',
-                      style: const TextStyle(
-                          color: CouleurApp.texteGris, fontSize: 12),
-                    ),
-                  ],
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: couleur.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
+                child: Icon(icone, size: 20, color: couleur),
               ),
-              // Note en gros
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    note.toStringAsFixed(1),
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: couleurNote,
-                    ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  titre,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: couleur,
                   ),
-                  Text(
-                    '/ 20',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: couleurNote.withOpacity(0.7),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
           const SizedBox(height: 14),
+          contenu,
+        ],
+      ),
+    );
+  }
+}
 
-          // ── Barre de progression de la note ───────────────────────────
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: ratioNote,
-              minHeight: 8,
-              backgroundColor: CouleurApp.bleuClair,
-              valueColor: AlwaysStoppedAnimation<Color>(couleurNote),
+// ─────────────────────────────────────────────────────────────────────────────
+// Ligne matière dans le récap
+// ─────────────────────────────────────────────────────────────────────────────
+class _LigneMatiere extends StatelessWidget {
+  final String nom;
+  final int coefficient;
+  final int difficulte;
+
+  const _LigneMatiere({
+    required this.nom,
+    required this.coefficient,
+    required this.difficulte,
+  });
+
+  String get _labelDiff {
+    switch (difficulte) {
+      case 1: return 'Facile';
+      case 3: return 'Difficile';
+      default: return 'Moyen';
+    }
+  }
+
+  Color get _couleurDiff {
+    switch (difficulte) {
+      case 1: return const Color(0xFF059669);
+      case 3: return const Color(0xFFDC2626);
+      default: return const Color(0xFFF59E0B);
+    }
+  }
+
+  String get _emoji {
+    switch (difficulte) {
+      case 1: return '😊';
+      case 3: return '😰';
+      default: return '😐';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Text(_emoji, style: const TextStyle(fontSize: 16)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              nom,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: CouleurApp.bleuSombre,
+              ),
             ),
           ),
-          const SizedBox(height: 8),
-
-          // ── Légende : note obtenue vs note cible ───────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Objectif : ${noteCible.toStringAsFixed(0)}/20',
-                style: const TextStyle(
-                    color: CouleurApp.texteGris, fontSize: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: CouleurApp.bleuClair,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              'Coeff.$coefficient',
+              style: const TextStyle(
+                color: CouleurApp.bleuPrincipal,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
               ),
-              if (priorite > 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: couleurNote.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    'Priorité : ${priorite.toStringAsFixed(0)}',
-                    style: TextStyle(
-                      color: couleurNote,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                )
-              else
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: CouleurApp.succesVert.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    'Objectif atteint ✓',
-                    style: TextStyle(
-                      color: CouleurApp.succesVert,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-            ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: _couleurDiff.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              _labelDiff,
+              style: TextStyle(
+                color: _couleurDiff,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),

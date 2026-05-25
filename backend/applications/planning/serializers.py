@@ -17,14 +17,12 @@ class MatiereResumeSerializer(serializers.ModelSerializer):
 class ItemObjectifSerializer(serializers.Serializer):
     """
     Valide un seul item reçu dans la liste POST.
-    Corps attendu : { "matiere_id": 3, "note_cible": 14.0 }
-
-    DRF PrimaryKeyRelatedField avec queryset= retourne directement l'objet Matiere
-    après validation — pas besoin de faire un .get() manuellement dans la vue.
+    Corps attendu : { "matiere_id": 3, "note_cible": 14.0, "niveau_difficulte": 2 }
     """
 
-    matiere_id = serializers.PrimaryKeyRelatedField(queryset=Matiere.objects.all())
-    note_cible = serializers.DecimalField(max_digits=4, decimal_places=1)
+    matiere_id         = serializers.PrimaryKeyRelatedField(queryset=Matiere.objects.all())
+    note_cible         = serializers.DecimalField(max_digits=4, decimal_places=1)
+    niveau_difficulte  = serializers.IntegerField(min_value=1, max_value=3, default=2)
 
     def validate_note_cible(self, valeur):
         if valeur < Decimal("10") or valeur > Decimal("20"):
@@ -41,21 +39,37 @@ class ObjectifMatiereSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ObjectifMatiere
-        fields = ["id", "matiere", "note_cible"]
+        fields = ["id", "matiere", "note_cible", "niveau_difficulte"]
 
 
 class TrancheHoraireSerializer(serializers.ModelSerializer):
-    """Sérialise une tranche horaire — duree_minutes est calculée, en lecture seule."""
+    """
+    Sérialise une tranche horaire.
+    - duree_minutes      : calculée, lecture seule.
+    - matiere_id         : FK matiere_principale — envoyée en écriture (optionnel).
+    - matiere_principale_nom : nom lisible retourné en lecture.
+    """
 
-    duree_minutes = serializers.SerializerMethodField()
+    duree_minutes          = serializers.SerializerMethodField()
+    matiere_id             = serializers.PrimaryKeyRelatedField(
+        queryset=Matiere.objects.all(),
+        source='matiere_principale',
+        required=False,
+        allow_null=True,
+    )
+    matiere_principale_nom = serializers.SerializerMethodField()
 
     class Meta:
         model  = TrancheHoraire
-        fields = ['id', 'jour', 'heure_debut', 'heure_fin', 'duree_minutes']
-        read_only_fields = ['id', 'duree_minutes']
+        fields = ['id', 'jour', 'heure_debut', 'heure_fin', 'duree_minutes',
+                  'matiere_id', 'matiere_principale_nom']
+        read_only_fields = ['id', 'duree_minutes', 'matiere_principale_nom']
 
     def get_duree_minutes(self, obj):
         return obj.duree_minutes
+
+    def get_matiere_principale_nom(self, obj):
+        return obj.matiere_principale.nom if obj.matiere_principale else None
 
 
 class DisponibiliteEleveSerializer(serializers.ModelSerializer):
@@ -86,6 +100,8 @@ class DisponibiliteEleveSerializer(serializers.ModelSerializer):
             "heures_jeudi", "heures_vendredi", "heures_samedi", "heures_dimanche",
             # Préférences horaires
             "creneau_prefere", "heure_debut",
+            # Préférence matin/soir pour les matières lourdes
+            "preference_etude",
             # Calculés
             "total_heures_semaine", "jours_disponibles",
             "date_mise_a_jour",

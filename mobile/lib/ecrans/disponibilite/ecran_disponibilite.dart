@@ -1,25 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
-import '../../donnees/local/stockage_local.dart';
+import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/routes.dart';
 import '../../noyau/theme.dart';
-
-// ─── Helper HTTP ──────────────────────────────────────────────────────────────
-Future<http.Response> _postAuth(String url, dynamic corps) async {
-  final token = await StockageLocal.lireTokenAcces();
-  return http.post(
-    Uri.parse(url),
-    headers: {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    },
-    body: jsonEncode(corps),
-  ).timeout(Constantes.dureeRequete);
-}
 
 // ─── Données des jours ────────────────────────────────────────────────────────
 const _jours = <Map<String, String>>[
@@ -32,7 +18,7 @@ const _jours = <Map<String, String>>[
   {'cle': 'dimanche', 'label': 'Dimanche', 'court': 'Dim'},
 ];
 
-// ─── Modèle d'une tranche ─────────────────────────────────────────────────────
+// ─── Modèle d'une tranche horaire ─────────────────────────────────────────────
 class _Tranche {
   final TimeOfDay debut;
   final TimeOfDay fin;
@@ -41,7 +27,7 @@ class _Tranche {
 
   int get dureeMinutes {
     final d = debut.hour * 60 + debut.minute;
-    final f = fin.hour * 60 + fin.minute;
+    final f = fin.hour   * 60 + fin.minute;
     return f > d ? f - d : f + 24 * 60 - d;
   }
 
@@ -51,9 +37,22 @@ class _Tranche {
   String get finStr =>
       '${fin.hour.toString().padLeft(2, '0')}:${fin.minute.toString().padLeft(2, '0')}';
 
-  String get label => '$debutStr → $finStr  (${dureeMinutes}min)';
-
   bool get valide => dureeMinutes >= 30 && dureeMinutes <= 240;
+
+  String get labelDuree {
+    final h = dureeMinutes ~/ 60;
+    final m = dureeMinutes % 60;
+    if (h > 0 && m > 0) return '${h}h${m.toString().padLeft(2,'0')}';
+    if (h > 0)            return '${h}h';
+    return '${m}min';
+  }
+
+  /// Période de la journée selon l'heure de début
+  String get periode {
+    if (debut.hour < 12) return 'Matin';
+    if (debut.hour < 17) return 'Après-midi';
+    return 'Soir';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,11 +67,17 @@ class EcranDisponibilite extends StatefulWidget {
 
 class _EcranDisponibiliteState extends State<EcranDisponibilite>
     with SingleTickerProviderStateMixin {
+
   late final TabController _tabCtrl;
-  bool _envoi = false;
+  bool    _envoi  = false;
   String? _erreur;
 
-  // tranches par jour : {'lundi': [_Tranche, ...], ...}
+  // Préférence de concentration : 'matin' ou 'soir'
+  // L'algorithme utilisera ceci pour placer les matières lourdes
+  // dans les créneaux qui correspondent à ce moment.
+  String _preferenceEtude = 'soir';
+
+  // Tranches par jour
   final Map<String, List<_Tranche>> _tranches = {
     for (final j in _jours) j['cle']!: [],
   };
@@ -94,88 +99,143 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
   int get _totalTranches =>
       _tranches.values.fold(0, (s, l) => s + l.length);
 
+  int get _budgetTotalMinutes =>
+      _tranches.values
+          .expand((l) => l)
+          .fold(0, (s, t) => s + t.dureeMinutes);
+
   // ── Ajouter une tranche via dialogue ─────────────────────────────────────
   Future<void> _ajouterTranche(String jour) async {
-    var debut = const TimeOfDay(hour: 18, minute: 0);
-    var fin   = const TimeOfDay(hour: 20, minute: 0);
+    var debut     = const TimeOfDay(hour: 18, minute: 0);
+    var fin       = const TimeOfDay(hour: 20, minute: 0);
     String? errDialog;
 
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialog) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Nouvelle séance'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Heure de début
-              _LigneHeure(
-                label: 'Début',
-                heure: debut,
-                onTap: () async {
-                  final h = await showTimePicker(
-                    context: ctx,
-                    initialTime: debut,
-                    builder: (c, child) => MediaQuery(
-                      data: MediaQuery.of(c).copyWith(alwaysUse24HourFormat: true),
-                      child: child!,
-                    ),
-                  );
-                  if (h != null) setDialog(() { debut = h; errDialog = null; });
-                },
-              ),
-              const SizedBox(height: 12),
-              // Heure de fin
-              _LigneHeure(
-                label: 'Fin',
-                heure: fin,
-                onTap: () async {
-                  final h = await showTimePicker(
-                    context: ctx,
-                    initialTime: fin,
-                    builder: (c, child) => MediaQuery(
-                      data: MediaQuery.of(c).copyWith(alwaysUse24HourFormat: true),
-                      child: child!,
-                    ),
-                  );
-                  if (h != null) setDialog(() { fin = h; errDialog = null; });
-                },
-              ),
-              if (errDialog != null) ...[
-                const SizedBox(height: 8),
-                Text(errDialog!,
-                  style: const TextStyle(color: CouleurApp.erreur, fontSize: 12)),
+        builder: (ctx, setDialog) {
+          final preview = _Tranche(debut: debut, fin: fin);
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: CouleurApp.bleuClair,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.add_alarm_rounded,
+                      color: CouleurApp.bleuPrincipal, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Text('Nouvelle séance', style: TextStyle(fontSize: 17)),
               ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── Sélecteurs d'heures ───────────────────────────────────
+                  _LigneHeure(
+                    label: 'Début',
+                    heure: debut,
+                    onTap: () async {
+                      final h = await showTimePicker(
+                        context: ctx,
+                        initialTime: debut,
+                        builder: (c, child) => MediaQuery(
+                          data: MediaQuery.of(c).copyWith(alwaysUse24HourFormat: true),
+                          child: child!,
+                        ),
+                      );
+                      if (h != null) setDialog(() { debut = h; errDialog = null; });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _LigneHeure(
+                    label: 'Fin',
+                    heure: fin,
+                    onTap: () async {
+                      final h = await showTimePicker(
+                        context: ctx,
+                        initialTime: fin,
+                        builder: (c, child) => MediaQuery(
+                          data: MediaQuery.of(c).copyWith(alwaysUse24HourFormat: true),
+                          child: child!,
+                        ),
+                      );
+                      if (h != null) setDialog(() { fin = h; errDialog = null; });
+                    },
+                  ),
+
+                  // ── Aperçu de la séance ────────────────────────────────────
+                  if (preview.valide) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: CouleurApp.fondClair,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.timer_outlined,
+                              size: 16, color: CouleurApp.bleuPrincipal),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${preview.debutStr} → ${preview.finStr}  ·  ${preview.labelDuree}  ·  ${preview.periode}',
+                            style: const TextStyle(
+                              color: CouleurApp.bleuSombre,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  if (errDialog != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errDialog!,
+                      style: const TextStyle(
+                          color: CouleurApp.erreur, fontSize: 12),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Annuler',
+                    style: TextStyle(color: CouleurApp.texteGris)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final t = _Tranche(debut: debut, fin: fin);
+                  if (!t.valide) {
+                    setDialog(() => errDialog =
+                      'La séance doit durer entre 30 min et 4h (${t.dureeMinutes} min).');
+                    return;
+                  }
+                  setState(() => _tranches[jour]!.add(t));
+                  Navigator.pop(ctx);
+                },
+                child: const Text('Ajouter'),
+              ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Annuler',
-                style: TextStyle(color: CouleurApp.texteGris)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final t = _Tranche(debut: debut, fin: fin);
-                if (!t.valide) {
-                  setDialog(() => errDialog =
-                    'La séance doit durer entre 30 min et 4h (${t.dureeMinutes} min)');
-                  return;
-                }
-                setState(() => _tranches[jour]!.add(t));
-                Navigator.pop(ctx);
-              },
-              child: const Text('Ajouter'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
-  // ── Supprimer une tranche ─────────────────────────────────────────────────
   void _supprimerTranche(String jour, int index) {
     setState(() => _tranches[jour]!.removeAt(index));
   }
@@ -183,15 +243,15 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
   // ── Envoi au backend ──────────────────────────────────────────────────────
   Future<void> _valider() async {
     if (_totalTranches == 0) {
-      setState(() => _erreur = 'Définis au moins une séance de travail');
+      setState(() => _erreur = 'Définis au moins une séance de travail.');
       return;
     }
 
     setState(() { _envoi = true; _erreur = null; });
 
     try {
-      // Construire la liste des tranches
-      final tranches = <Map<String, String>>[];
+      // Construire la liste des tranches (sans matière — l'algo décide)
+      final tranches = <Map<String, dynamic>>[];
       for (final j in _jours) {
         final cle = j['cle']!;
         for (final t in _tranches[cle]!) {
@@ -203,10 +263,14 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
         }
       }
 
-      // Calculer les anciens champs (pour ConseillerDisponibilite)
-      final payload = <String, dynamic>{'tranches': tranches};
-      TimeOfDay? premiereHeure;
+      // Construire le payload complet
+      final payload = <String, dynamic>{
+        'tranches':         tranches,
+        'preference_etude': _preferenceEtude,
+      };
 
+      // Champs booléens/heures pour compatibilité backend
+      TimeOfDay? premiereHeure;
       for (final j in _jours) {
         final cle  = j['cle']!;
         final list = _tranches[cle]!;
@@ -214,35 +278,31 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
         payload['${cle}_dispo'] = actif;
         final totalMin = list.fold<int>(0, (s, t) => s + t.dureeMinutes);
         payload['heures_$cle'] = (totalMin / 60).round().clamp(0, 24);
-
-        if (actif && premiereHeure == null) {
-          premiereHeure = list.first.debut;
-        }
+        if (actif && premiereHeure == null) premiereHeure = list.first.debut;
       }
 
-      // Créneau préféré dérivé de la première heure définie
       final h = premiereHeure?.hour ?? 18;
-      final creneau = h < 12 ? 'matin' : (h < 18 ? 'apres_midi' : 'soir');
-      payload['creneau_prefere'] = creneau;
+      payload['creneau_prefere'] =
+          h < 12 ? 'matin' : (h < 18 ? 'apres_midi' : 'soir');
       payload['heure_debut'] =
           '${(premiereHeure?.hour ?? 18).toString().padLeft(2, '0')}:'
           '${(premiereHeure?.minute ?? 0).toString().padLeft(2, '0')}';
 
-      final rep = await _postAuth(Constantes.urlDisponibilite, payload);
+      final rep = await ClientApi.post(
+        Constantes.urlDisponibilite,
+        payload,
+        avecToken: true,
+      );
       if (rep.statusCode >= 400) {
         final corps = jsonDecode(utf8.decode(rep.bodyBytes));
-        throw Exception(corps.toString());
+        final msg   = corps is Map
+            ? (corps['erreur'] ?? corps['detail'] ?? corps.toString())
+            : corps.toString();
+        throw Exception(msg);
       }
 
-      final data   = jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>;
-      final conseil = data['conseil'] as Map<String, dynamic>;
-
       if (!mounted) return;
-      Navigator.pushNamed(
-        context,
-        Routes.conseilDisponibilite,
-        arguments: conseil,
-      );
+      Navigator.pushReplacementNamed(context, Routes.emploiDuTemps);
     } catch (e) {
       setState(() {
         _erreur = e.toString().replaceFirst('Exception: ', '');
@@ -270,8 +330,7 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white60,
           tabs: _jours.map((j) {
-            final cle = j['cle']!;
-            final nb  = _nbTranches(cle);
+            final nb = _nbTranches(j['cle']!);
             return Tab(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -280,8 +339,7 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
                   if (nb > 0) ...[
                     const SizedBox(width: 4),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(10),
@@ -309,9 +367,9 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
               child: TabBarView(
                 controller: _tabCtrl,
                 children: _jours.map((j) => _OngletJour(
-                  jour: j['cle']!,
-                  label: j['label']!,
-                  tranches: _tranches[j['cle']!]!,
+                  jour:      j['cle']!,
+                  label:     j['label']!,
+                  tranches:  _tranches[j['cle']!]!,
                   onAjouter: () => _ajouterTranche(j['cle']!),
                   onSupprimer: (i) => _supprimerTranche(j['cle']!, i),
                 )).toList(),
@@ -325,28 +383,54 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
   }
 
   Widget _buildPied() {
+    // Durée totale formatée
+    final totalMin = _budgetTotalMinutes;
+    final totalH   = totalMin ~/ 60;
+    final totalM   = totalMin % 60;
+    final labelBudget = totalH > 0
+        ? '${totalH}h${totalM > 0 ? totalM.toString().padLeft(2,'0') : ''}/semaine'
+        : '${totalM}min/semaine';
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
       decoration: const BoxDecoration(
         color: CouleurApp.fondBlanc,
         border: Border(top: BorderSide(color: CouleurApp.bordure)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Résumé total
-          if (_totalTranches > 0)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                '$_totalTranches séance${_totalTranches > 1 ? 's' : ''} définie${_totalTranches > 1 ? 's' : ''}',
-                style: const TextStyle(
-                  color: CouleurApp.succesVert,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
+
+          // ── Budget total ────────────────────────────────────────────────
+          if (_totalTranches > 0) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.schedule_rounded,
+                    size: 14, color: CouleurApp.succesVert),
+                const SizedBox(width: 6),
+                Text(
+                  '$_totalTranches séance${_totalTranches > 1 ? 's' : ''} · $labelBudget de travail',
+                  style: const TextStyle(
+                    color: CouleurApp.succesVert,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
-              ),
+              ],
             ),
+            const SizedBox(height: 14),
+          ],
+
+          // ── Question : Matin ou Soir ? ──────────────────────────────────
+          _CartePreference(
+            valeur:    _preferenceEtude,
+            onChanged: (v) => setState(() => _preferenceEtude = v),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Erreur ──────────────────────────────────────────────────────
           if (_erreur != null)
             Container(
               width: double.infinity,
@@ -359,15 +443,17 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
               ),
               child: Row(children: [
                 const Icon(Icons.warning_amber_rounded,
-                  color: CouleurApp.erreur, size: 18),
+                    color: CouleurApp.erreur, size: 18),
                 const SizedBox(width: 8),
                 Expanded(child: Text(_erreur!,
-                  style: const TextStyle(color: CouleurApp.erreur, fontSize: 13))),
+                    style: const TextStyle(
+                        color: CouleurApp.erreur, fontSize: 13))),
               ]),
             ),
+
+          // ── Bouton principal ────────────────────────────────────────────
           SizedBox(
             height: 52,
-            width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: _envoi ? null : _valider,
               icon: _envoi
@@ -382,6 +468,154 @@ class _EcranDisponibiliteState extends State<EcranDisponibilite>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Carte de préférence matin / soir
+// ─────────────────────────────────────────────────────────────────────────────
+class _CartePreference extends StatelessWidget {
+  final String valeur;          // 'matin' ou 'soir'
+  final ValueChanged<String> onChanged;
+
+  const _CartePreference({required this.valeur, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: CouleurApp.fondClair,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: CouleurApp.bordure),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.bolt_rounded, size: 16, color: CouleurApp.bleuPrincipal),
+              SizedBox(width: 6),
+              Text(
+                'Quand es-tu le plus concentré(e) ?',
+                style: TextStyle(
+                  color: CouleurApp.bleuSombre,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'L\'algorithme placera tes matières les plus difficiles '
+            'dans tes meilleurs créneaux.',
+            style: TextStyle(
+              color: CouleurApp.texteGris,
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _BoutonPreference(
+                  emoji:     '🌅',
+                  label:     'Matin',
+                  sousTitre: 'Avant midi',
+                  valeur:    'matin',
+                  selectionne: valeur == 'matin',
+                  onTap:     () => onChanged('matin'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _BoutonPreference(
+                  emoji:     '🌙',
+                  label:     'Soir',
+                  sousTitre: 'Après 17h',
+                  valeur:    'soir',
+                  selectionne: valeur == 'soir',
+                  onTap:     () => onChanged('soir'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BoutonPreference extends StatelessWidget {
+  final String emoji;
+  final String label;
+  final String sousTitre;
+  final String valeur;
+  final bool   selectionne;
+  final VoidCallback onTap;
+
+  const _BoutonPreference({
+    required this.emoji,
+    required this.label,
+    required this.sousTitre,
+    required this.valeur,
+    required this.selectionne,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+        decoration: BoxDecoration(
+          color: selectionne
+              ? CouleurApp.bleuPrincipal
+              : CouleurApp.fondBlanc,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selectionne
+                ? CouleurApp.bleuPrincipal
+                : CouleurApp.bordure,
+            width: selectionne ? 2 : 1,
+          ),
+          boxShadow: selectionne
+              ? [
+                  BoxShadow(
+                    color: CouleurApp.bleuPrincipal.withOpacity(0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : [],
+        ),
+        child: Column(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 26)),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selectionne ? Colors.white : CouleurApp.bleuSombre,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+            Text(
+              sousTitre,
+              style: TextStyle(
+                color: selectionne ? Colors.white70 : CouleurApp.texteGris,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -405,6 +639,19 @@ class _OngletJour extends StatelessWidget {
     required this.onSupprimer,
   });
 
+  int get _totalMinutes =>
+      tranches.fold(0, (s, t) => s + t.dureeMinutes);
+
+  String get _labelTotal {
+    final m = _totalMinutes;
+    if (m == 0) return '';
+    final h = m ~/ 60;
+    final r = m % 60;
+    return h > 0
+        ? '${h}h${r > 0 ? r.toString().padLeft(2,'0') : ''} de travail'
+        : '${r}min de travail';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -412,7 +659,6 @@ class _OngletJour extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // En-tête + bouton ajouter
           Row(
             children: [
               Expanded(
@@ -430,11 +676,10 @@ class _OngletJour extends StatelessWidget {
                     Text(
                       tranches.isEmpty
                           ? 'Aucune séance définie'
-                          : '${tranches.length} séance${tranches.length > 1 ? 's' : ''}',
+                          : '${tranches.length} séance${tranches.length > 1 ? 's' : ''}'
+                            '${_labelTotal.isNotEmpty ? '  ·  $_labelTotal' : ''}',
                       style: const TextStyle(
-                        color: CouleurApp.texteGris,
-                        fontSize: 13,
-                      ),
+                          color: CouleurApp.texteGris, fontSize: 13),
                     ),
                   ],
                 ),
@@ -446,8 +691,7 @@ class _OngletJour extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: CouleurApp.bleuPrincipal,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                 ),
@@ -455,7 +699,6 @@ class _OngletJour extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 20),
-
           if (tranches.isEmpty)
             _PlaceholderVide(onAjouter: onAjouter)
           else
@@ -475,26 +718,39 @@ class _OngletJour extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Carte d'une tranche
+// Carte d'une tranche horaire (sans sélection de matière — l'algo décide)
 // ─────────────────────────────────────────────────────────────────────────────
 class _CarteTranche extends StatelessWidget {
-  final _Tranche tranche;
+  final _Tranche     tranche;
   final VoidCallback onSupprimer;
 
   const _CarteTranche({required this.tranche, required this.onSupprimer});
 
+  Color get _couleurPeriode {
+    if (tranche.debut.hour < 12) return const Color(0xFFF59E0B); // matin → ambre
+    if (tranche.debut.hour < 17) return const Color(0xFF10B981); // après-midi → vert
+    return CouleurApp.bleuPrincipal;                              // soir → bleu
+  }
+
+  IconData get _iconePeriode {
+    if (tranche.debut.hour < 12) return Icons.wb_sunny_outlined;
+    if (tranche.debut.hour < 17) return Icons.cloud_outlined;
+    return Icons.nights_stay_outlined;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final c = _couleurPeriode;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: CouleurApp.fondBlanc,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: CouleurApp.bleuPrincipal.withOpacity(0.25)),
+        border: Border.all(color: c.withOpacity(0.3)),
         boxShadow: [
           BoxShadow(
-            color: CouleurApp.bleuPrincipal.withOpacity(0.06),
+            color: c.withOpacity(0.07),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -502,17 +758,18 @@ class _CarteTranche extends StatelessWidget {
       ),
       child: Row(
         children: [
+          // Icône période
           Container(
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: CouleurApp.bleuClair,
+              color: c.withOpacity(0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.access_time_rounded,
-                color: CouleurApp.bleuPrincipal, size: 22),
+            child: Icon(_iconePeriode, color: c, size: 22),
           ),
           const SizedBox(width: 14),
+          // Infos
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -526,16 +783,35 @@ class _CarteTranche extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  '${tranche.dureeMinutes} minutes de travail',
-                  style: const TextStyle(
-                    color: CouleurApp.texteGris,
-                    fontSize: 12,
-                  ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: c.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        tranche.periode,
+                        style: TextStyle(
+                          color: c,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      tranche.labelDuree,
+                      style: const TextStyle(
+                          color: CouleurApp.texteGris, fontSize: 12),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
+          // Supprimer
           IconButton(
             onPressed: onSupprimer,
             icon: const Icon(Icons.delete_outline_rounded,
@@ -549,7 +825,7 @@ class _CarteTranche extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Placeholder quand aucune séance n'est définie pour ce jour
+// Placeholder — aucune séance ce jour
 // ─────────────────────────────────────────────────────────────────────────────
 class _PlaceholderVide extends StatelessWidget {
   final VoidCallback onAjouter;
@@ -563,8 +839,8 @@ class _PlaceholderVide extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.wb_sunny_outlined,
-              size: 56,
-              color: CouleurApp.texteGris.withOpacity(0.4)),
+                size: 56,
+                color: CouleurApp.texteGris.withOpacity(0.4)),
             const SizedBox(height: 16),
             const Text(
               'Pas de séance ce jour',
@@ -576,7 +852,7 @@ class _PlaceholderVide extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Tape "Ajouter" pour définir une plage horaire',
+              'Tape "Ajouter" pour définir un créneau de travail',
               style: TextStyle(color: CouleurApp.texteGris, fontSize: 13),
               textAlign: TextAlign.center,
             ),
@@ -598,10 +874,10 @@ class _PlaceholderVide extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Ligne heure dans le dialogue d'ajout
+// Ligne heure dans le dialogue
 // ─────────────────────────────────────────────────────────────────────────────
 class _LigneHeure extends StatelessWidget {
-  final String label;
+  final String    label;
   final TimeOfDay heure;
   final VoidCallback onTap;
 
@@ -628,18 +904,18 @@ class _LigneHeure extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(label,
-              style: const TextStyle(
-                color: CouleurApp.texteGris, fontSize: 14)),
+                style: const TextStyle(
+                    color: CouleurApp.texteGris, fontSize: 14)),
             Row(children: [
               Text('$hh:$mm',
-                style: const TextStyle(
-                  color: CouleurApp.bleuPrincipal,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                )),
+                  style: const TextStyle(
+                    color: CouleurApp.bleuPrincipal,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                  )),
               const SizedBox(width: 6),
               const Icon(Icons.access_time_rounded,
-                color: CouleurApp.bleuPrincipal, size: 18),
+                  color: CouleurApp.bleuPrincipal, size: 18),
             ]),
           ],
         ),

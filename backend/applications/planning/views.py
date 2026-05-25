@@ -7,8 +7,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from applications.diagnostic.models import ResultatDiagnostic
-
 from .algorithme import GenerateurPlan, RevisionEspacee
 from .conseiller import ConseillerDisponibilite
 from .models import (
@@ -34,10 +32,36 @@ from .serializers import (
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Vue 0 : Liste des matières (utilisée par l'écran disponibilité)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueMatieres(APIView):
+    """
+    GET /api/planning/matieres/
+
+    Retourne la liste des matières du niveau de l'élève connecté.
+    Utilisée par l'écran disponibilité pour sélectionner la matière
+    principale d'un créneau horaire.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        matieres = Matiere.objects.filter(
+            niveau=request.user.niveau,
+            systeme=request.user.systeme_scolaire or 'FR',
+        ).order_by('ordre_affichage')
+        return Response([
+            {'id': m.id, 'nom': m.nom, 'coefficient': float(m.coefficient_minesec)}
+            for m in matieres
+        ])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers partagés entre plusieurs vues
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _serialiser_session(session):
+def _serialiser_session(session, heure_debut_session=None, heure_fin_session=None):
     """Dict JSON d'une SessionEtude — utilisé dans toutes les réponses."""
     tranche = None
     if getattr(session, 'tranche_horaire_id', None):
@@ -57,13 +81,39 @@ def _serialiser_session(session):
             "coefficient":         float(session.chapitre.matiere.coefficient_minesec),
             "necessite_exercices": session.chapitre.matiere.necessite_exercices,
         },
-        "duree_minutes":   session.duree_minutes,
-        "type_session":    session.type_session,
-        "completee":       session.completee,
-        "est_optionnelle": session.est_optionnelle,
-        "date_prevue":     session.date_prevue.isoformat(),
-        "tranche":         tranche,
+        "duree_minutes":       session.duree_minutes,
+        "type_session":        session.type_session,
+        "completee":           session.completee,
+        "est_optionnelle":     session.est_optionnelle,
+        "date_prevue":         session.date_prevue.isoformat(),
+        "tranche":             tranche,
+        "heure_debut_session": heure_debut_session,
+        "heure_fin_session":   heure_fin_session,
     }
+
+
+def _calculer_horaires(sessions):
+    """
+    Pour chaque session qui a une tranche horaire, calcule l'heure de début et
+    de fin à l'intérieur de sa tranche en accumulant les durées.
+    Retourne {session.id: ("HH:MM", "HH:MM")}.
+    Sessions attendues ordonnées par (date_prevue, tranche_horaire__heure_debut, id).
+    """
+    from datetime import datetime, timedelta as td
+    horaires = {}
+    # Curseur par (date, tranche_id)
+    curseurs = {}
+    for s in sessions:
+        if not s.tranche_horaire_id:
+            continue
+        key = (s.date_prevue, s.tranche_horaire_id)
+        if key not in curseurs:
+            curseurs[key] = datetime.combine(s.date_prevue, s.tranche_horaire.heure_debut)
+        debut = curseurs[key]
+        fin   = debut + td(minutes=s.duree_minutes)
+        horaires[s.id] = (debut.strftime('%H:%M'), fin.strftime('%H:%M'))
+        curseurs[key]  = fin
+    return horaires
 
 
 def _mettre_a_jour_progression(eleve, session):
@@ -87,13 +137,6 @@ def _mettre_a_jour_progression(eleve, session):
 
     prog.date_derniere_revision = date.today()
     prog.save(update_fields=["statut", "date_derniere_revision"])
-
-
-def _calculer_priorite(note_obtenue, note_cible, coefficient):
-    """Règle métier CONTEXTE.md : priorité = (note_cible - note_obtenue) × coefficient."""
-    if float(note_obtenue) >= float(note_cible):
-        return 0
-    return round((float(note_cible) - float(note_obtenue)) * coefficient, 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,9 +166,10 @@ class VueObjectifsEleve(APIView):
         for matiere in matieres:
             obj = objectifs.get(matiere.pk)
             donnees.append({
-                "matiere":     MatiereResumeSerializer(matiere).data,
-                "note_cible":  float(obj.note_cible) if obj else None,
-                "objectif_id": obj.pk if obj else None,
+                "matiere":            MatiereResumeSerializer(matiere).data,
+                "note_cible":         float(obj.note_cible) if obj else None,
+                "niveau_difficulte":  obj.niveau_difficulte if obj else None,
+                "objectif_id":        obj.pk if obj else None,
             })
 
         return Response(donnees)
@@ -148,6 +192,14 @@ class VueObjectifsEleve(APIView):
         if erreurs:
             return Response(erreurs, status=status.HTTP_400_BAD_REQUEST)
 
+        # Validation : l'élève ne peut pas mettre TOUTES ses matières à difficulté 3
+        if items_valides and all(item["niveau_difficulte"] == 3 for item in items_valides):
+            return Response(
+                {"erreur": "Tu ne peux pas mettre toutes tes matières à difficulté 3. "
+                           "Identifie au moins une matière que tu trouves plus facile."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         eleve = request.user
         ids_autorises = set(
             Matiere.objects.filter(
@@ -169,31 +221,18 @@ class VueObjectifsEleve(APIView):
             obj, _ = ObjectifMatiere.objects.update_or_create(
                 eleve=eleve,
                 matiere=matiere,
-                defaults={"note_cible": item["note_cible"]},
+                defaults={
+                    "note_cible":        item["note_cible"],
+                    "niveau_difficulte": item["niveau_difficulte"],
+                },
             )
             obj.matiere = matiere
             sauvegardes.append(obj)
 
-        resultats_diagnostic = {
-            r.matiere_id: r.note_obtenue
-            for r in ResultatDiagnostic.objects.filter(eleve=eleve)
-        }
-
-        donnees = []
-        for obj in sauvegardes:
-            entree = ObjectifMatiereSerializer(obj).data
-            note_obtenue = resultats_diagnostic.get(obj.matiere_id)
-            if note_obtenue is not None:
-                entree["note_obtenue"] = float(note_obtenue)
-                entree["priorite"] = _calculer_priorite(
-                    note_obtenue, obj.note_cible, obj.matiere.coefficient_minesec,
-                )
-            else:
-                entree["note_obtenue"] = None
-                entree["priorite"] = None
-            donnees.append(entree)
-
-        return Response(donnees, status=status.HTTP_200_OK)
+        return Response(
+            ObjectifMatiereSerializer(sauvegardes, many=True).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class VueDisponibilite(APIView):
@@ -351,14 +390,18 @@ class VuePlanningAujourdhui(APIView):
             )
 
         aujourd_hui = date.today()
-        sessions = (
+        sessions = list(
             SessionEtude.objects
             .filter(plan=plan, date_prevue=aujourd_hui)
             .select_related("chapitre__matiere", "tranche_horaire")
             .order_by("tranche_horaire__heure_debut", "id")
         )
 
-        donnees = [_serialiser_session(s) for s in sessions]
+        horaires = _calculer_horaires(sessions)
+        donnees = [
+            _serialiser_session(s, *horaires.get(s.id, (None, None)))
+            for s in sessions
+        ]
 
         return Response(
             {
@@ -412,17 +455,21 @@ class VuePlanningHebdomadaire(APIView):
 
         date_fin = date_debut + timedelta(days=6)
 
-        sessions = (
+        sessions = list(
             SessionEtude.objects
             .filter(plan=plan, date_prevue__range=(date_debut, date_fin))
             .select_related("chapitre__matiere", "tranche_horaire")
             .order_by("date_prevue", "tranche_horaire__heure_debut", "id")
         )
 
+        horaires = _calculer_horaires(sessions)
+
         # Indexer par date ISO
         par_date = defaultdict(list)
         for s in sessions:
-            par_date[s.date_prevue.isoformat()].append(_serialiser_session(s))
+            par_date[s.date_prevue.isoformat()].append(
+                _serialiser_session(s, *horaires.get(s.id, (None, None)))
+            )
 
         # Garantir les 7 jours même s'ils sont vides
         planning = {
@@ -679,16 +726,10 @@ class VueProgressionDetaillee(APIView):
         systeme  = eleve.systeme_scolaire or "FR"
         matieres = Matiere.objects.filter(niveau=eleve.niveau, systeme=systeme)
 
-        objectifs = {
-            o.matiere_id: float(o.note_cible)
+        objectifs_qs = {
+            o.matiere_id: o
             for o in ObjectifMatiere.objects.filter(eleve=eleve)
         }
-        resultats = {}
-        for r in ResultatDiagnostic.objects.filter(
-            eleve=eleve
-        ).order_by("matiere_id", "-date_diagnostic"):
-            if r.matiere_id not in resultats:
-                resultats[r.matiere_id] = float(r.note_obtenue)
 
         par_matiere = []
         for mat in matieres:
@@ -702,10 +743,13 @@ class VueProgressionDetaillee(APIView):
             maitrises = progs.filter(statut=ProgressionChapitre.MAITRISE).count()
             en_cours  = progs.filter(statut=ProgressionChapitre.EN_COURS).count()
 
-            note_init = resultats.get(mat.id, 10.0)
-            note_obj  = objectifs.get(mat.id, 12.0)
-            # Estimation linéaire : chaque chapitre maîtrisé rapproche du but
-            note_act  = note_init + (note_obj - note_init) * (maitrises / total_ch)
+            obj_mat   = objectifs_qs.get(mat.id)
+            note_obj  = float(obj_mat.note_cible) if obj_mat else 12.0
+            difficulte = obj_mat.niveau_difficulte if obj_mat else 2
+
+            # Estimation linéaire du niveau actuel : progression des chapitres maîtrisés
+            # La base de départ est 10 (minimum), l'objectif est la borne haute.
+            note_act = 10.0 + (note_obj - 10.0) * (maitrises / total_ch)
 
             man_mat = sessions_qs.filter(
                 chapitre__matiere=mat,
@@ -735,7 +779,7 @@ class VueProgressionDetaillee(APIView):
                 "id":                    mat.id,
                 "nom":                   mat.nom,
                 "coefficient":           float(mat.coefficient_minesec),
-                "note_initiale":         round(note_init, 1),
+                "niveau_difficulte":     difficulte,
                 "note_actuelle_estimee": round(note_act, 1),
                 "note_objectif":         note_obj,
                 "chapitres_maitrises":   maitrises,

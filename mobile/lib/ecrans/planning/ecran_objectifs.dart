@@ -10,7 +10,7 @@ import '../../noyau/routes.dart';
 import '../../noyau/theme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers HTTP locaux (même pattern que ecran_diagnostic.dart)
+// Helpers HTTP locaux
 // ─────────────────────────────────────────────────────────────────────────────
 Future<http.Response> _getAuth(String url) async {
   final token = await StockageLocal.lireTokenAcces();
@@ -32,7 +32,7 @@ Future<http.Response> _postAuth(String url, dynamic corps) async {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Écran de définition des objectifs par matière
+// Écran de définition des objectifs et niveaux de difficulté par matière
 // ─────────────────────────────────────────────────────────────────────────────
 class EcranObjectifs extends StatefulWidget {
   const EcranObjectifs({super.key});
@@ -47,24 +47,23 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
   bool _sauvegarde = false;
   String? _erreur;
 
-  // Liste de matières chargées depuis l'API
-  // Chaque item : { matiere: {id, nom, coefficient_minesec}, note_cible: double|null, objectif_id: int|null }
   List<Map<String, dynamic>> _matieres = [];
 
-  // Note globale — quand on la modifie, toutes les matières sont mises à jour
+  // Note cible globale — quand modifiée, toutes les matières sont mises à jour
   double _noteGlobale = 14.0;
 
-  // Notes individuelles par matiere_id (initialisées depuis l'API ou depuis _noteGlobale)
+  // Notes individuelles par matiere_id
   final Map<int, double> _notes = {};
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // Difficulté par matiere_id (1 = facile, 2 = moyen, 3 = difficile)
+  final Map<int, int> _difficultes = {};
+
   @override
   void initState() {
     super.initState();
     _chargerMatieres();
   }
 
-  // ── Charger la liste des matières avec objectifs existants ────────────────
   Future<void> _chargerMatieres() async {
     setState(() { _chargement = true; _erreur = null; });
     try {
@@ -74,20 +73,22 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
         throw Exception(corps['detail'] ?? 'Erreur serveur');
       }
       final liste = jsonDecode(utf8.decode(reponse.bodyBytes)) as List<dynamic>;
-
       final matieres = liste.map((e) => e as Map<String, dynamic>).toList();
 
-      // Initialiser les notes depuis l'API (si déjà définies) sinon 14.0
       final notes = <int, double>{};
+      final difficultes = <int, int>{};
       for (final item in matieres) {
         final id = (item['matiere'] as Map<String, dynamic>)['id'] as int;
-        final existante = item['note_cible'];
-        notes[id] = existante != null ? double.parse(existante.toString()) : 14.0;
+        notes[id]       = item['note_cible'] != null
+            ? double.parse(item['note_cible'].toString()) : 14.0;
+        difficultes[id] = item['niveau_difficulte'] != null
+            ? (item['niveau_difficulte'] as num).toInt() : 2;
       }
 
       setState(() {
         _matieres = matieres;
         _notes.addAll(notes);
+        _difficultes.addAll(difficultes);
         _chargement = false;
       });
     } catch (e) {
@@ -98,7 +99,6 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
     }
   }
 
-  // ── Appliquer la note globale à toutes les matières ───────────────────────
   void _appliquerNoteGlobale(double valeur) {
     setState(() {
       _noteGlobale = valeur;
@@ -108,20 +108,33 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
     });
   }
 
-  // ── Sauvegarder les objectifs et passer à l'étape suivante ───────────────
   Future<void> _valider() async {
+    // Validation : pas toutes les matières à difficulté 3
+    if (_difficultes.values.isNotEmpty &&
+        _difficultes.values.every((d) => d == 3)) {
+      setState(() {
+        _erreur = 'Tu ne peux pas mettre toutes tes matières à difficulté 3. '
+            'Identifie au moins une matière que tu trouves plus facile.';
+      });
+      return;
+    }
+
     setState(() { _sauvegarde = true; _erreur = null; });
     try {
-      // Construire la liste pour le POST
       final payload = _matieres.map((item) {
         final id = (item['matiere'] as Map<String, dynamic>)['id'] as int;
-        return {'matiere_id': id, 'note_cible': _notes[id] ?? _noteGlobale};
+        return {
+          'matiere_id':        id,
+          'note_cible':        _notes[id] ?? _noteGlobale,
+          'niveau_difficulte': _difficultes[id] ?? 2,
+        };
       }).toList();
 
       final reponse = await _postAuth(Constantes.urlObjectifs, payload);
       if (reponse.statusCode >= 400) {
         final corps = jsonDecode(utf8.decode(reponse.bodyBytes));
-        throw Exception(corps.toString());
+        final msg = corps is Map ? (corps['erreur'] ?? corps.toString()) : corps.toString();
+        throw Exception(msg);
       }
 
       if (!mounted) return;
@@ -134,7 +147,6 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -144,7 +156,7 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
         foregroundColor: Colors.white,
         automaticallyImplyLeading: false,
         centerTitle: true,
-        title: const Text('Mes objectifs'),
+        title: const Text('Objectifs & difficulté'),
       ),
       body: SafeArea(child: _buildCorps()),
     );
@@ -193,29 +205,33 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── Professeur guide ───────────────────────────────────────────
+          // ── Message du professeur ──────────────────────────────────────────
           GuideProfesseur(
-            message: 'Avant de commencer le diagnostic, '
-                'dis-moi quelle note tu vises à ton examen. '
-                'Je vais créer ton planning en fonction de tes ambitions !',
+            message: 'Pour chaque matière, dis-moi quelle note tu vises '
+                'et à quel point tu la trouves difficile. '
+                'Je calculerai exactement le temps qu\'il te faut !',
             vitesseEcriture: const Duration(milliseconds: 30),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
 
-          // ── Sélecteur note globale ─────────────────────────────────────
+          // ── Note cible globale ─────────────────────────────────────────────
           _CarteNoteGlobale(
             noteGlobale: _noteGlobale,
             onChanged: _appliquerNoteGlobale,
           ),
           const SizedBox(height: 24),
 
-          // ── Séparateur ─────────────────────────────────────────────────
+          // ── Légende difficulté ─────────────────────────────────────────────
+          _CarteLegendeDifficulte(),
+          const SizedBox(height: 20),
+
+          // ── Séparateur ─────────────────────────────────────────────────────
           Row(children: [
             const Expanded(child: Divider(color: CouleurApp.bordure)),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Text(
-                'AJUSTE PAR MATIÈRE',
+                'PAR MATIÈRE',
                 style: TextStyle(
                   color: CouleurApp.texteGris,
                   fontSize: 11,
@@ -228,44 +244,48 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
           ]),
           const SizedBox(height: 16),
 
-          // ── Une carte par matière ──────────────────────────────────────
+          // ── Une carte par matière ──────────────────────────────────────────
           ..._matieres.map((item) {
             final matiere = item['matiere'] as Map<String, dynamic>;
-            final id = matiere['id'] as int;
-            final nom = matiere['nom'] as String;
+            final id    = matiere['id'] as int;
+            final nom   = matiere['nom'] as String;
             final coeff = matiere['coefficient_minesec'] as int;
             return _CarteObjectifMatiere(
-              nom: nom,
-              coefficient: coeff,
-              note: _notes[id] ?? _noteGlobale,
-              onChanged: (v) => setState(() => _notes[id] = v),
+              nom:           nom,
+              coefficient:   coeff,
+              note:          _notes[id] ?? _noteGlobale,
+              difficulte:    _difficultes[id] ?? 2,
+              onNoteChanged: (v) => setState(() => _notes[id] = v),
+              onDifficulteChanged: (v) => setState(() => _difficultes[id] = v),
             );
           }),
 
-          // ── Bannière erreur sauvegarde ─────────────────────────────────
+          // ── Bannière erreur ────────────────────────────────────────────────
           if (_erreur != null) ...[
             const SizedBox(height: 8),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: CouleurApp.erreur.withOpacity(0.08),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: CouleurApp.erreur.withOpacity(0.3)),
               ),
-              child: Row(children: [
-                const Icon(Icons.error_outline_rounded,
-                    color: CouleurApp.erreur, size: 20),
-                const SizedBox(width: 10),
-                Expanded(child: Text(_erreur!,
-                    style: const TextStyle(
-                        color: CouleurApp.erreur, fontSize: 13))),
-              ]),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline_rounded,
+                      color: CouleurApp.erreur, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(_erreur!,
+                      style: const TextStyle(color: CouleurApp.erreur, fontSize: 13))),
+                ],
+              ),
             ),
           ],
 
           const SizedBox(height: 28),
 
-          // ── Bouton valider ─────────────────────────────────────────────
+          // ── Bouton valider ─────────────────────────────────────────────────
           SizedBox(
             height: 54,
             child: ElevatedButton.icon(
@@ -288,7 +308,116 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Carte : note cible globale (s'applique à toutes les matières d'un coup)
+// Légende des niveaux de difficulté
+// ─────────────────────────────────────────────────────────────────────────────
+class _CarteLegendeDifficulte extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F9FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFBAE6FD)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.info_outline_rounded,
+                  size: 16, color: CouleurApp.bleuPrincipal),
+              SizedBox(width: 8),
+              Text(
+                'Niveau de difficulté',
+                style: TextStyle(
+                  color: CouleurApp.bleuPrincipal,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'L\'algorithme utilisera cette information pour calculer '
+            'le temps optimal à allouer à chaque matière.',
+            style: TextStyle(color: CouleurApp.texteGris, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _PuceDifficulte(niveau: 1, compact: true),
+              const SizedBox(width: 8),
+              _PuceDifficulte(niveau: 2, compact: true),
+              const SizedBox(width: 8),
+              _PuceDifficulte(niveau: 3, compact: true),
+              const Spacer(),
+              const Text(
+                '⚠ Pas toutes à 3',
+                style: TextStyle(
+                  color: CouleurApp.erreur,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Puce de difficulté affichée en légende et dans les cartes
+// ─────────────────────────────────────────────────────────────────────────────
+class _PuceDifficulte extends StatelessWidget {
+  final int  niveau;
+  final bool compact;
+
+  const _PuceDifficulte({required this.niveau, this.compact = false});
+
+  static const _labels  = {1: 'Facile', 2: 'Moyen', 3: 'Difficile'};
+  static const _emojis  = {1: '😊', 2: '😐', 3: '😰'};
+  static const _couleurs = {
+    1: Color(0xFF16A34A),
+    2: Color(0xFFF59E0B),
+    3: Color(0xFFDC2626),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _couleurs[niveau]!;
+    return Container(
+      padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 12, vertical: compact ? 4 : 5),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: c.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(_emojis[niveau]!, style: const TextStyle(fontSize: 12)),
+          const SizedBox(width: 4),
+          Text(
+            _labels[niveau]!,
+            style: TextStyle(
+              color: c,
+              fontSize: compact ? 11 : 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Carte : note cible globale
 // ─────────────────────────────────────────────────────────────────────────────
 class _CarteNoteGlobale extends StatelessWidget {
   final double noteGlobale;
@@ -333,21 +462,19 @@ class _CarteNoteGlobale extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Ma note cible générale',
+            'Note cible générale',
             style: TextStyle(
               color: CouleurApp.bleuSombre,
               fontSize: 15,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 4),
           const Text(
             'Ce curseur met à jour toutes les matières en même temps',
             style: TextStyle(color: CouleurApp.texteGris, fontSize: 12),
           ),
           const SizedBox(height: 16),
 
-          // Note affichée en grand
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -374,7 +501,6 @@ class _CarteNoteGlobale extends StatelessWidget {
             ],
           ),
 
-          // Label niveau
           Center(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
@@ -394,7 +520,6 @@ class _CarteNoteGlobale extends StatelessWidget {
           ),
           const SizedBox(height: 12),
 
-          // Curseur
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               activeTrackColor: _couleur,
@@ -412,7 +537,6 @@ class _CarteNoteGlobale extends StatelessWidget {
             ),
           ),
 
-          // Légende min/max
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 8),
             child: Row(
@@ -430,33 +554,43 @@ class _CarteNoteGlobale extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Carte : objectif individuel pour une matière
+// Carte : objectif + difficulté pour une matière
 // ─────────────────────────────────────────────────────────────────────────────
 class _CarteObjectifMatiere extends StatelessWidget {
-  final String nom;
-  final int coefficient;
-  final double note;
-  final ValueChanged<double> onChanged;
+  final String   nom;
+  final int      coefficient;
+  final double   note;
+  final int      difficulte;       // 1, 2 ou 3
+  final ValueChanged<double> onNoteChanged;
+  final ValueChanged<int>    onDifficulteChanged;
 
   const _CarteObjectifMatiere({
     required this.nom,
     required this.coefficient,
     required this.note,
-    required this.onChanged,
+    required this.difficulte,
+    required this.onNoteChanged,
+    required this.onDifficulteChanged,
   });
 
-  Color get _couleur {
+  Color get _couleurNote {
     if (note >= 16) return CouleurApp.succesVert;
     if (note >= 14) return CouleurApp.bleuPrincipal;
     if (note >= 12) return const Color(0xFFF59E0B);
     return CouleurApp.erreur;
   }
 
+  static const _couleursDiff = {
+    1: Color(0xFF16A34A),
+    2: Color(0xFFF59E0B),
+    3: Color(0xFFDC2626),
+  };
+
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
         color: CouleurApp.fondBlanc,
         borderRadius: BorderRadius.circular(16),
@@ -465,7 +599,7 @@ class _CarteObjectifMatiere extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // En-tête : nom + coeff + note
+          // ── En-tête : nom + coeff + note ──────────────────────────────────
           Row(
             children: [
               Expanded(
@@ -488,17 +622,17 @@ class _CarteObjectifMatiere extends StatelessWidget {
                   ],
                 ),
               ),
-              // Note affichée à droite
+              // Note à droite
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _couleur.withOpacity(0.10),
+                  color: _couleurNote.withOpacity(0.10),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   '${note.toInt()} / 20',
                   style: TextStyle(
-                    color: _couleur,
+                    color: _couleurNote,
                     fontWeight: FontWeight.bold,
                     fontSize: 15,
                   ),
@@ -506,15 +640,14 @@ class _CarteObjectifMatiere extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 4),
 
-          // Curseur individuel
+          // ── Curseur note ──────────────────────────────────────────────────
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              activeTrackColor: _couleur,
-              thumbColor: _couleur,
+              activeTrackColor: _couleurNote,
+              thumbColor: _couleurNote,
               inactiveTrackColor: CouleurApp.bordure,
-              overlayColor: _couleur.withOpacity(0.12),
+              overlayColor: _couleurNote.withOpacity(0.12),
               trackHeight: 5,
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
             ),
@@ -523,8 +656,57 @@ class _CarteObjectifMatiere extends StatelessWidget {
               min: 10,
               max: 20,
               divisions: 10,
-              onChanged: onChanged,
+              onChanged: onNoteChanged,
             ),
+          ),
+
+          // ── Séparateur ────────────────────────────────────────────────────
+          const Divider(height: 16, color: CouleurApp.bordure),
+
+          // ── Sélecteur de difficulté ───────────────────────────────────────
+          const Text(
+            'DIFFICULTÉ RESSENTIE',
+            style: TextStyle(
+              color: CouleurApp.texteGris,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.0,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [1, 2, 3].map((niveau) {
+              final estSelectionne = difficulte == niveau;
+              final c = _couleursDiff[niveau]!;
+              const labels  = {1: '😊 Facile', 2: '😐 Moyen', 3: '😰 Difficile'};
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => onDifficulteChanged(niveau),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: EdgeInsets.only(right: niveau < 3 ? 8 : 0),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: estSelectionne ? c : c.withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: estSelectionne ? c : c.withOpacity(0.3),
+                        width: estSelectionne ? 2 : 1,
+                      ),
+                    ),
+                    child: Text(
+                      labels[niveau]!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: estSelectionne ? Colors.white : c,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),

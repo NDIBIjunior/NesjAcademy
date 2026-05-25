@@ -225,6 +225,12 @@ class SessionEtude(models.Model):
 class ObjectifMatiere(models.Model):
     """Note cible qu'un élève se fixe pour chaque matière."""
 
+    DIFFICULTE_CHOICES = [
+        (1, "Facile — je comprends bien"),
+        (2, "Moyen — j'ai quelques lacunes"),
+        (3, "Difficile — j'ai du mal"),
+    ]
+
     eleve = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -241,6 +247,11 @@ class ObjectifMatiere(models.Model):
         decimal_places=1,
         help_text="Note visée par l'élève (entre 10 et 20)",
     )
+    niveau_difficulte = models.PositiveSmallIntegerField(
+        choices=DIFFICULTE_CHOICES,
+        default=2,
+        help_text="Difficulté ressentie (1=facile, 3=difficile) — sert à calculer le poids de la matière",
+    )
 
     class Meta:
         verbose_name = "Objectif Matière"
@@ -248,7 +259,7 @@ class ObjectifMatiere(models.Model):
         unique_together = ("eleve", "matiere")
 
     def __str__(self):
-        return f"{self.eleve} → {self.matiere.nom} : {self.note_cible}/20"
+        return f"{self.eleve} → {self.matiere.nom} : {self.note_cible}/20 (diff. {self.niveau_difficulte})"
 
 
 class DisponibiliteEleve(models.Model):
@@ -290,6 +301,19 @@ class DisponibiliteEleve(models.Model):
     creneau_prefere = models.CharField(max_length=10, choices=CRENEAUX, default='soir')
     # Heure de début souhaitée pour les sessions (ex : 18:00)
     heure_debut = models.TimeField(default=datetime.time(18, 0))
+    # Préférence matin/soir — guide l'algo pour placer les matières lourdes
+    PREFERENCE_MATIN = 'matin'
+    PREFERENCE_SOIR  = 'soir'
+    PREFERENCES_ETUDE = [
+        ('matin', 'Matin — je suis plus concentré(e) le matin'),
+        ('soir',  'Soir — je préfère étudier après les cours'),
+    ]
+    preference_etude = models.CharField(
+        max_length=5,
+        choices=PREFERENCES_ETUDE,
+        default='soir',
+        help_text="Moment préféré pour les matières difficiles : l'algo place les matières lourdes à ce moment",
+    )
 
     date_mise_a_jour = models.DateTimeField(auto_now=True)
 
@@ -350,6 +374,13 @@ class TrancheHoraire(models.Model):
     jour        = models.CharField(max_length=9, choices=JOURS)
     heure_debut = models.TimeField()
     heure_fin   = models.TimeField()
+    matiere_principale = models.ForeignKey(
+        Matiere,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tranches_principales',
+        help_text="Matière prioritaire fixée pour ce créneau (ex : Lundi soir = Maths)",
+    )
 
     class Meta:
         verbose_name        = 'Tranche horaire'

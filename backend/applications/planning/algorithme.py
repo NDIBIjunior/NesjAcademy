@@ -8,16 +8,21 @@ COMMENT ÇA MARCHE — VUE D'ENSEMBLE
 On veut produire un planning de révision sur mesure pour un élève.
 Voici les 6 grandes étapes dans l'ordre d'exécution :
 
-  Étape 1 — SCORES
-      Pour chaque matière, on calcule un score de priorité.
-      Formule : score = max(coeff × 1.5,  écart × coeff)
-      où  écart = note_cible - note_obtenue
-      → Une matière difficile (gros écart) et à fort coeff pèse plus lourd.
-      → Toutes les matières ont un score > 0 (minimum garanti = coeff × 1.5).
+  Étape 1 — POIDS PAR MATIÈRE
+      Pour chaque matière, on calcule un poids de priorité.
+      Formule : poids = niveau_difficulte × coefficient_minesec
+      niveau_difficulte : 1 (facile) · 2 (moyen) · 3 (difficile) — saisi par l'élève.
+      → Maths coeff=7 + difficulté=3 → poids=21. Philo coeff=3 + difficulté=1 → poids=3.
+
+  Étape 1b — ASSIGNATION AUTOMATIQUE DES TRANCHES
+      L'algorithme attribue automatiquement une matière principale à chaque créneau
+      horaire de l'élève, sans que l'élève ait à choisir.
+      Critères : préférence matin/soir → les meilleurs créneaux vont aux matières lourdes.
+      Résultat : chaque semaine, même créneau = même matière.
 
   Étape 2 — HEURES PAR MATIÈRE
-      On divise le total des heures disponibles proportionnellement aux scores.
-      Exemple : Maths score=38 sur total=100 → Maths reçoit 38 % des heures.
+      On divise le total des heures disponibles proportionnellement aux poids.
+      Exemple : Maths poids=21 sur somme=46 → Maths reçoit 45.7 % des heures.
 
   Étape 3 — SESSIONS DE DÉCOUVERTE (construire_sessions)
       Pour chaque matière, on génère autant de blocs d'étude (sessions) que
@@ -33,9 +38,10 @@ Voici les 6 grandes étapes dans l'ordre d'exécution :
       Chaque jour de travail a une ou plusieurs tranches horaires (ex: 16h-18h).
       Pour chaque tranche, on remplit dans cet ordre de priorité :
 
-        PRIORITÉ 0 — Révision immédiate (cours du lycée ce jour-là)
-            Si l'élève a eu Maths au lycée aujourd'hui →
-            on place une session Maths de 40 min "pendant qu'il se souvient encore".
+        BOUSSOLE LYCEE — L'emploi du temps oriente la routine hebdo
+            Si l'élève a Maths le lundi au lycée, on préfère placer
+            une session Maths le lundi soir (sans la forcer ni la doubler).
+            5+ cours par jour en Terminale C → pas de révision immédiate forcée.
 
         PRIORITÉ 1 — Révisions espacées dues aujourd'hui (J+1, J+3, J+7, J+14)
             Ebbinghaus : pour ne pas oublier, il faut revoir à intervalles croissants.
@@ -67,6 +73,7 @@ from collections import deque
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 from .models import (
     Chapitre,
@@ -78,7 +85,6 @@ from .models import (
     ProgressionChapitre,
     SessionEtude,
 )
-from applications.diagnostic.models import ResultatDiagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +98,6 @@ Utilisateur = get_user_model()
 # Durée standard d'un bloc de découverte (en minutes).
 # 60 min = durée idéale pour une session d'apprentissage concentré.
 DUREE_SESSION_DECOUVERTE = 60
-
-# Durée d'une révision immédiate après un cours lycée (en minutes).
-DUREE_REVISION_IMMEDIATE = 40
 
 # Durée des révisions espacées J+1 / J+3 / J+7 / J+14 (en minutes).
 DUREE_REVISION_ESPACEE = 30
@@ -117,6 +120,23 @@ _WEEKDAY_JOUR = {v: k for k, v in _JOUR_WEEKDAY.items()}
 # ─────────────────────────────────────────────────────────────────────────────
 # Fonctions utilitaires internes
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _grouper_par_matiere(sessions):
+    """
+    Réordonne une liste de sessions pour regrouper celles de même matière,
+    en préservant l'ordre de première apparition de chaque matière.
+    Ex : [Maths 30m, SVT 30m, Maths 1h45] → [Maths 30m, Maths 1h45, SVT 30m]
+    """
+    ordre_matieres = []
+    groupes = {}
+    for s in sessions:
+        mid = s['matiere_id']
+        if mid not in groupes:
+            ordre_matieres.append(mid)
+            groupes[mid] = []
+        groupes[mid].append(s)
+    return [s for mid in ordre_matieres for s in groupes[mid]]
+
 
 def _planning_par_weekday(dispo):
     """
@@ -178,116 +198,179 @@ def _retirer_session_matiere(file_sessions, matiere_id):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Classe 1 : PrioriteCalculateur
+# Classe 1 : CalculateurPoids
 # ─────────────────────────────────────────────────────────────────────────────
 
-class PrioriteCalculateur:
+class CalculateurPoids:
     """
     Détermine quelle matière mérite le plus d'heures de révision.
 
-    ── Formule V2 ──────────────────────────────────────────────────────────────
-    Pour les matières principales (avec diagnostic) :
-        score = max(coeff × 1.5,  écart × coeff)
-        où écart = max(0, note_cible − note_obtenue)
-        → Le "max" garantit un score minimum même si l'objectif est presque atteint.
+    ── Formule V3 ──────────────────────────────────────────────────────────────
+    poids = niveau_difficulte × coefficient_minesec
 
-    Pour les matières secondaires (sans diagnostic, niveau auto = 10/20) :
-        score = coeff × 1.5
-        → Présence proportionnelle au coefficient, même sans quiz.
+    niveau_difficulte : 1 (facile) · 2 (moyen) · 3 (difficile) — saisi par l'élève
+    coefficient_minesec : coefficient officiel MINESEC de la matière
 
-    ── Exemple (Terminale C, Salomon) ─────────────────────────────────────────
-    Maths   coeff=7 : obtenu=8.5  cible=14  → écart=5.5 → max(10.5, 38.5) = 38.5
-    Philo   coeff=3 : secondaire           → score = 3 × 1.5 = 4.5
-    EdC     coeff=1 : secondaire           → score = 1 × 1.5 = 1.5
-    → EdC et Philo ont des scores > 0 → elles obtiennent des heures → elles apparaissent.
+    ── Exemples (Terminale C) ──────────────────────────────────────────────────
+    Maths    coeff=7, difficulté=3 → poids = 21
+    Physique coeff=7, difficulté=2 → poids = 14
+    SVT      coeff=4, difficulté=2 → poids = 8
+    Philo    coeff=3, difficulté=1 → poids = 3
+    → Maths reçoit 21/(21+14+8+3) = 46 % des heures disponibles.
     """
 
-    def calculer_score_v2(self, eleve):
+    def calculer_poids(self, eleve):
         """
-        Retourne {matiere_id: score} pour toutes les matières du niveau de l'élève.
+        Retourne {matiere_id: poids} pour toutes les matières avec objectif défini.
+        Seules les matières pour lesquelles l'élève a saisi un ObjectifMatiere
+        (avec niveau_difficulte) sont prises en compte.
         """
-        logger.info("Étape 1 : Calcul des scores de priorité (V2) pour %s", eleve)
+        logger.info("Etape 1 : Calcul des poids de priorite (V3) pour %s", eleve)
 
-        # Notes les plus récentes du quiz diagnostic
-        resultats = {}
-        for r in (
-            ResultatDiagnostic.objects
+        poids_par_matiere = {}
+        for obj in (
+            ObjectifMatiere.objects
             .filter(eleve=eleve)
-            .order_by('matiere_id', '-date_diagnostic')
+            .select_related('matiere')
         ):
-            if r.matiere_id not in resultats:
-                resultats[r.matiere_id] = float(r.note_obtenue)
-
-        # Objectifs de l'élève
-        objectifs = {
-            o.matiere_id: float(o.note_cible)
-            for o in ObjectifMatiere.objects.filter(eleve=eleve)
-        }
-
-        matieres = Matiere.objects.filter(niveau=eleve.niveau, systeme='FR')
-
-        scores = {}
-        for mat in matieres:
-            coeff         = mat.coefficient_minesec
-            score_minimum = coeff * 1.5  # Présence minimale garantie dans le planning
-
-            if mat.necessite_diagnostic:
-                note_obtenue    = resultats.get(mat.id, 10.0)
-                note_cible      = objectifs.get(mat.id, 10.0)
-                ecart           = max(0.0, note_cible - note_obtenue)
-                score_principal = ecart * coeff
-                score_final     = max(score_minimum, score_principal)
-            else:
-                # Matière secondaire : juste la présence proportionnelle au coeff
-                note_obtenue    = 10.0
-                note_cible      = 10.0
-                score_principal = 0.0
-                score_final     = score_minimum
-
-            scores[mat.id] = score_final
+            poids = obj.niveau_difficulte * obj.matiere.coefficient_minesec
+            poids_par_matiere[obj.matiere_id] = poids
             logger.info(
-                "  %-20s [%-9s] : obtenu=%.1f  cible=%.1f  principal=%.1f  min=%.1f → score=%.1f",
-                mat.nom,
-                'PRINCIPALE' if mat.necessite_diagnostic else 'SECONDAIRE',
-                note_obtenue, note_cible, score_principal, score_minimum, score_final,
+                "  %-20s : difficulte=%d x coeff=%d -> poids=%d",
+                obj.matiere.nom, obj.niveau_difficulte,
+                obj.matiere.coefficient_minesec, poids,
             )
 
-        return scores
+        return poids_par_matiere
 
-    def repartir_heures(self, scores, total_heures):
+    def repartir_heures(self, poids_par_matiere, total_heures):
         """
-        Répartit total_heures proportionnellement aux scores.
+        Répartit total_heures proportionnellement aux poids.
         Retourne {matiere_id: heures_allouees}.
 
-        Exemple : Maths score=38.5, total_scores=100 → Maths reçoit 38.5 % des heures.
-        Si tous les scores sont à 0 (objectifs déjà atteints), répartition égale.
+        Exemple : Maths poids=21 sur somme=46 → Maths reçoit 45.7 % des heures.
+        Si somme des poids = 0, répartition égale (garde-fou).
         """
-        logger.info(
-            "Étape 2 : Répartition de %.1fh selon les scores",
-            total_heures,
-        )
+        logger.info("Etape 2 : Repartition de %.1fh selon les poids", total_heures)
 
-        somme_scores = sum(scores.values())
+        somme_poids = sum(poids_par_matiere.values())
 
-        if somme_scores == 0:
-            nb = len(scores)
+        if somme_poids == 0:
+            nb = len(poids_par_matiere)
             if nb == 0:
                 return {}
             heures_egales = total_heures / nb
-            logger.info("  Tous les objectifs atteints → répartition égale (%.1fh/matière)", heures_egales)
-            return {mid: heures_egales for mid in scores}
+            logger.info("  Somme poids = 0 -> repartition egale (%.1fh/matiere)", heures_egales)
+            return {mid: heures_egales for mid in poids_par_matiere}
 
         heures_par_matiere = {}
-        for matiere_id, score in scores.items():
-            proportion = score / somme_scores
-            heures     = proportion * total_heures
+        for matiere_id, poids in poids_par_matiere.items():
+            proportion            = poids / somme_poids
+            heures                = proportion * total_heures
             heures_par_matiere[matiere_id] = heures
             logger.info(
-                "  matière_id=%s : score=%.1f → %.1f%% → %.1fh",
-                matiere_id, score, proportion * 100, heures,
+                "  matiere_id=%s : poids=%d -> %.1f%% -> %.1fh",
+                matiere_id, poids, proportion * 100, heures,
             )
 
         return heures_par_matiere
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fonction utilitaire : assigner_matieres_aux_tranches
+# ─────────────────────────────────────────────────────────────────────────────
+
+def assigner_matieres_aux_tranches(dispo, poids_par_matiere):
+    """
+    Assigne automatiquement une matière principale à chaque TrancheHoraire.
+
+    ── Objectif ────────────────────────────────────────────────────────────────
+    L'élève n'a pas à choisir "lundi soir = Maths". L'algorithme décide seul,
+    en garantissant que les matières les plus lourdes obtiennent les créneaux
+    de forte concentration (selon preference_etude).
+
+    ── Algorithme glouton ───────────────────────────────────────────────────────
+    1. Trier les tranches : créneaux préférés (matin ou soir) en tête,
+       puis par durée décroissante à égalité.
+    2. Calculer le budget hebdomadaire et la cible d'heures par matière
+       (proportionnel aux poids).
+    3. Pour chaque tranche (du meilleur créneau au moins bon) :
+       → Assigner la matière avec le plus grand déficit (cible − déjà assigné).
+       → Si toutes les matières ont leur quota, laisser la tranche libre.
+
+    ── Garanties ────────────────────────────────────────────────────────────────
+    - Matières lourdes → meilleurs créneaux de concentration.
+    - Une tranche = une matière fixe chaque semaine.
+    - Le round-robin (PRIORITÉ 2b) couvre les matières légères dans les
+      tranches sans matière fixe ou après épuisement du quota.
+
+    ── Séquençage dans la journée ───────────────────────────────────────────────
+    Les tranches sont ensuite consommées dans l'ordre heure_debut → la matière
+    lourde (placée dans le meilleur créneau) précède naturellement la légère.
+    """
+    tranches = list(dispo.tranches.all())
+    if not tranches or not poids_par_matiere:
+        return
+
+    preference = getattr(dispo, 'preference_etude', 'soir')
+
+    def score_concentration(t):
+        h = t.heure_debut.hour
+        if preference == 'matin':
+            est_prefere = h < 13
+        else:
+            est_prefere = h >= 17
+        return (est_prefere, t.duree_minutes)
+
+    tranches_triees = sorted(tranches, key=score_concentration, reverse=True)
+
+    # Budget hebdomadaire (somme des durées de toutes les tranches)
+    budget_semaine = sum(t.duree_minutes for t in tranches) / 60.0
+    somme_poids    = sum(poids_par_matiere.values())
+
+    heures_cibles = {
+        mat_id: (poids / somme_poids) * budget_semaine
+        for mat_id, poids in poids_par_matiere.items()
+    }
+    heures_assignees = {mat_id: 0.0 for mat_id in poids_par_matiere}
+
+    # Tri stable des matières par poids décroissant (ordre de priorité en cas d'égalité)
+    matieres_par_poids = sorted(poids_par_matiere.items(), key=lambda x: x[1], reverse=True)
+
+    logger.info(
+        "Assignation automatique des tranches (preference=%s, budget_semaine=%.1fh)",
+        preference, budget_semaine,
+    )
+
+    with transaction.atomic():
+        for tranche in tranches_triees:
+            duree_h = tranche.duree_minutes / 60.0
+
+            # Matière avec le plus grand déficit parmi celles qui en ont encore
+            meilleur_mat_id = None
+            meilleur_deficit = 0.0
+            for mat_id, _ in matieres_par_poids:
+                deficit = heures_cibles[mat_id] - heures_assignees[mat_id]
+                if deficit > meilleur_deficit:
+                    meilleur_deficit = deficit
+                    meilleur_mat_id  = mat_id
+
+            if meilleur_mat_id:
+                tranche.matiere_principale_id = meilleur_mat_id
+                heures_assignees[meilleur_mat_id] += duree_h
+                logger.info(
+                    "  %-9s %s-%s -> matiere_id=%-3s  (deficit restant=%.1fh)",
+                    tranche.jour, tranche.heure_debut, tranche.heure_fin,
+                    meilleur_mat_id, meilleur_deficit - duree_h,
+                )
+            else:
+                tranche.matiere_principale_id = None
+                logger.info(
+                    "  %-9s %s-%s -> libre (round-robin)",
+                    tranche.jour, tranche.heure_debut, tranche.heure_fin,
+                )
+
+            tranche.save(update_fields=['matiere_principale'])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -402,8 +485,8 @@ class SessionConstructeur:
                  (chapitres triés PAS_VU → EN_COURS → MAITRISE ignoré).
             A2 — Entrelacement round-robin de toutes les listes.
         """
-        logger.info("Étape 3 : Construction des sessions de découverte (round-robin)")
-        logger.info("  Durée standard d'un bloc : %d min", DUREE_SESSION_DECOUVERTE)
+        logger.info("Etape 3 : Construction des sessions de decouverte (round-robin)")
+        logger.info("  Duree standard d'un bloc : %d min", DUREE_SESSION_DECOUVERTE)
 
         # ── A1 : Générer les sessions par matière ─────────────────────────────
 
@@ -416,7 +499,7 @@ class SessionConstructeur:
             try:
                 matiere = Matiere.objects.get(id=matiere_id)
             except Matiere.DoesNotExist:
-                logger.warning("  Matière id=%s introuvable, ignorée.", matiere_id)
+                logger.warning("  Matiere id=%s introuvable, ignoree.", matiere_id)
                 continue
 
             # Durée d'une session selon le type de matière
@@ -478,10 +561,31 @@ class SessionConstructeur:
                     })
                     minutes_utilisees += duree
 
+            # Garantie : si le budget est trop petit pour générer une session
+            # (< DUREE_MINIMALE_SESSION), on force quand même 1 séance courte
+            # pour que la matière apparaisse dans le planning.
+            if not liste_sessions_matiere and chapitres:
+                for ch in chapitres:
+                    statut = progressions.get(ch.id, ProgressionChapitre.PAS_VU)
+                    if statut != ProgressionChapitre.MAITRISE:
+                        duree_garantie = max(minutes_allouees, DUREE_MINIMALE_SESSION)
+                        liste_sessions_matiere.append({
+                            'chapitre':      ch,
+                            'chapitre_id':   ch.id,
+                            'matiere_id':    matiere_id,
+                            'duree_minutes': duree_garantie,
+                            'type_session':  SessionEtude.DECOUVERTE,
+                        })
+                        logger.info(
+                            "  %-20s : budget faible (%.0fmin) -> 1 session garantie (%dmin)",
+                            matiere.nom, minutes_allouees, duree_garantie,
+                        )
+                        break
+
             if liste_sessions_matiere:
                 sessions_par_matiere[matiere_id] = liste_sessions_matiere
                 logger.info(
-                    "  %-20s : %.1fh allouées → %d sessions",
+                    "  %-20s : %.1fh allouees -> %d sessions",
                     matiere.nom, heures_allouees, len(liste_sessions_matiere),
                 )
 
@@ -514,7 +618,7 @@ class SessionConstructeur:
                     if i < len(liste):
                         sessions_entrelacees.append(liste[i])
 
-        logger.info("  Total sessions de découverte générées : %d", len(sessions_entrelacees))
+        logger.info("  Total sessions de decouverte generees : %d", len(sessions_entrelacees))
         return sessions_entrelacees
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -539,11 +643,10 @@ class SessionConstructeur:
 
         3. Pour chaque tranche, on remplit dans l'ordre de priorité :
 
-           PRIORITÉ 0 — Révision immédiate (cours lycée du jour)
-               L'élève vient d'avoir Maths en cours → on place immédiatement
-               une révision de 40 min pour consolider. On retire la session
-               Maths correspondante de la file principale (elle sera faite
-               en révision immédiate plutôt qu'en découverte).
+           BOUSSOLE LYCEE — orienter sans contraindre
+               L'emploi du temps sert de boussole de routine hebdo.
+               Si l'élève a Maths le lundi, on préfère une session Maths
+               lundi soir — mais sans forcer ni bloquer les autres matières.
 
            PRIORITÉ 1 — Révisions espacées dues aujourd'hui
                J+1 après la session d'hier, J+3, J+7, J+14…
@@ -578,7 +681,7 @@ class SessionConstructeur:
 
         Retourne une liste de dicts prêts à devenir des SessionEtude en base.
         """
-        logger.info("Étape 4 : Planification du calendrier")
+        logger.info("Etape 4 : Planification du calendrier")
 
         try:
             dispo = eleve.disponibilite
@@ -590,7 +693,11 @@ class SessionConstructeur:
         # Pour chaque jour de la semaine, on connaît les tranches horaires disponibles.
         # Exemple : lundi → [(120, <TrancheHoraire 16h-18h>)]
         #
-        toutes_tranches = list(dispo.tranches.all().order_by('heure_debut'))
+        toutes_tranches = list(
+            dispo.tranches.all()
+            .select_related('matiere_principale')
+            .order_by('heure_debut')
+        )
         if toutes_tranches:
             plages_par_wd: dict = {}
             for t in toutes_tranches:
@@ -615,17 +722,16 @@ class SessionConstructeur:
         date_debut = date.today()
         date_fin   = eleve.date_examen
 
-        # ── Emploi du temps lycée : {weekday: [matiere_id, ...]} ──────────────
+        # ── Emploi du temps lycée : {weekday: set(matiere_id)} ──────────────
         #
-        # Si l'élève a Maths le lundi au lycée, on place une révision immédiate
-        # chaque lundi. C'est la logique "révision basée sur les matières du jour".
+        # Boussole de routine : indique quelles matieres l'eleve a au lycee
+        # chaque jour de la semaine. Pas de revision forcee - on prefere juste
+        # ces matieres ce jour-la pour creer une routine hebdomadaire stable.
         #
         cours_par_weekday: dict = {}
-        duree_imm_par_matiere: dict = {}  # durée révision immédiate selon la matière
         for cours in CoursHebdomadaire.objects.filter(eleve=eleve).select_related('matiere'):
             wd = _JOUR_WEEKDAY[cours.jour]
-            cours_par_weekday.setdefault(wd, []).append(cours.matiere_id)
-            duree_imm_par_matiere[cours.matiere_id] = cours.matiere.duree_lecture_minutes
+            cours_par_weekday.setdefault(wd, set()).add(cours.matiere_id)
 
         # ── État initial de la planification ──────────────────────────────────
         file_sessions        = deque(sessions_non_datees)  # File entrelacée des sessions à placer
@@ -651,17 +757,37 @@ class SessionConstructeur:
             # ── Variables du jour ─────────────────────────────────────────────
             matieres_du_jour   = set()    # Matières déjà étudiées aujourd'hui (max 2)
             revisions_a_placer = list(revisions_dues)
-            cours_du_jour      = list(cours_par_weekday.get(jour_courant.weekday(), []))
-            cours_revises      = set()    # Cours lycée déjà traités en révision immédiate
+            cours_du_jour_set  = cours_par_weekday.get(jour_courant.weekday(), set())
 
-            # ── Alternance : éviter de commencer par la même matière qu'hier ──
+            # ── Boussole lycee + alternance : choisir la premiere session ────
             #
-            # Si la session en tête de file est la même matière qu'hier,
-            # on cherche la première session d'une matière différente.
-            # Grâce au round-robin, cette session différente est souvent juste
-            # quelques positions plus loin.
+            # Priorite :
+            #   1. Matiere du lycee aujourd'hui, differente d'hier  -> routine hebdo
+            #   2. Matiere du lycee aujourd'hui (meme si repete)    -> garder la routine
+            #   3. Alternance simple : eviter la meme matiere qu'hier
             #
-            if file_sessions and file_sessions[0]['matiere_id'] in matieres_hier:
+            # L'emploi du temps est une boussole, pas une contrainte :
+            # au Cameroun un eleve peut avoir 5+ cours par jour, on ne force
+            # pas la revision immediate de tous ces cours le soir meme.
+            #
+            if file_sessions and cours_du_jour_set:
+                # Essai 1 : matiere lycee aujourd'hui, differente d'hier
+                trouve = False
+                for i, sess in enumerate(file_sessions):
+                    if sess['matiere_id'] in cours_du_jour_set and sess['matiere_id'] not in matieres_hier:
+                        if i > 0:
+                            file_sessions.rotate(-i)
+                        trouve = True
+                        break
+                if not trouve:
+                    # Essai 2 : n'importe quelle matiere lycee aujourd'hui
+                    for i, sess in enumerate(file_sessions):
+                        if sess['matiere_id'] in cours_du_jour_set:
+                            if i > 0:
+                                file_sessions.rotate(-i)
+                            break
+            elif file_sessions and file_sessions[0]['matiere_id'] in matieres_hier:
+                # Pas de matiere lycee aujourd'hui : eviter la repetition d'hier
                 for i, sess in enumerate(file_sessions):
                     if sess['matiere_id'] not in matieres_hier:
                         file_sessions.rotate(-i)
@@ -670,45 +796,7 @@ class SessionConstructeur:
             # ── Traitement tranche par tranche ────────────────────────────────
             for (duree_tranche, tranche_obj) in plages_du_jour:
                 minutes_restantes = duree_tranche
-
-                # ═══════════════════════════════════════════════════════════════
-                # PRIORITÉ 0 — Révision immédiate (cours du lycée aujourd'hui)
-                # ═══════════════════════════════════════════════════════════════
-                #
-                # Logique : si l'élève a eu Maths au lycée aujourd'hui, on prend
-                # la première session Maths dans la file et on la transforme en
-                # "révision immédiate" de 40 min.
-                # Bénéfice : l'élève révise pendant qu'il se souvient encore bien.
-                #
-                for matiere_id in cours_du_jour:
-                    if matiere_id in cours_revises:
-                        continue  # Déjà fait pour ce cours aujourd'hui
-                    # Durée de révision immédiate selon la matière (= durée de lecture)
-                    duree_imm = duree_imm_par_matiere.get(matiere_id, DUREE_REVISION_IMMEDIATE)
-                    if minutes_restantes < DUREE_MINIMALE_SESSION:
-                        break     # Pas assez de temps dans cette tranche
-                    if len(matieres_du_jour) >= 2 and matiere_id not in matieres_du_jour:
-                        continue  # Déjà 2 matières différentes, ne pas en ajouter une 3ème
-
-                    sess = _retirer_session_matiere(file_sessions, matiere_id)
-                    cours_revises.add(matiere_id)
-                    if sess is None:
-                        continue  # Plus de session disponible pour cette matière
-
-                    duree_effective = min(duree_imm, minutes_restantes)
-                    sessions_datees.append({
-                        **sess,
-                        'date':            jour_courant,
-                        'type_session':    SessionEtude.REVISION_IMMEDIATE,
-                        'duree_minutes':   duree_effective,
-                        'tranche_horaire': tranche_obj,
-                    })
-                    matieres_du_jour.add(matiere_id)
-                    minutes_restantes -= duree_effective
-                    logger.debug(
-                        "  [%s] Révision immédiate %s : %d min",
-                        jour_courant, matiere_id, duree_effective,
-                    )
+                buffer_tranche    = []  # sessions de cette tranche, regroupées en fin de boucle
 
                 # ═══════════════════════════════════════════════════════════════
                 # PRIORITÉ 1 — Révisions espacées dues aujourd'hui (J+1/J+3/J+7/J+14)
@@ -726,7 +814,7 @@ class SessionConstructeur:
                         restantes_apres.append(rev)
                         continue
                     duree_rev = min(rev['duree_minutes'], minutes_restantes)
-                    sessions_datees.append({
+                    buffer_tranche.append({
                         **rev,
                         'date':            jour_courant,
                         'duree_minutes':   duree_rev,
@@ -738,10 +826,49 @@ class SessionConstructeur:
                 revisions_a_placer = restantes_apres
 
                 # ═══════════════════════════════════════════════════════════════
-                # PRIORITÉ 2 — Sessions de découverte (depuis la file entrelacée)
+                # PRIORITÉ 2a — Matière principale fixée pour ce créneau
                 # ═══════════════════════════════════════════════════════════════
                 #
-                # On consomme la file round-robin.
+                # Si l'élève a choisi "ce lundi soir = Maths", on place d'abord
+                # autant de sessions Maths que le temps le permet, AVANT le
+                # round-robin. La matière principale n'est pas soumise à la règle
+                # max 2 matières/jour — c'est un choix intentionnel de l'élève.
+                #
+                mat_principale_id = (
+                    tranche_obj.matiere_principale_id
+                    if tranche_obj and tranche_obj.matiere_principale_id
+                    else None
+                )
+                if mat_principale_id:
+                    while minutes_restantes >= DUREE_MINIMALE_SESSION:
+                        sess_p = _retirer_session_matiere(file_sessions, mat_principale_id)
+                        if sess_p is None:
+                            break
+                        duree_p = min(sess_p['duree_minutes'], minutes_restantes)
+                        if duree_p < DUREE_MINIMALE_SESSION:
+                            file_sessions.appendleft(sess_p)
+                            break
+                        buffer_tranche.append({
+                            **sess_p,
+                            'date':            jour_courant,
+                            'duree_minutes':   duree_p,
+                            'tranche_horaire': tranche_obj,
+                            'est_optionnelle': False,
+                        })
+                        matieres_du_jour.add(mat_principale_id)
+                        minutes_restantes -= duree_p
+                        for rev in reviseur.creer_revisions(sess_p, jour_courant, date_fin):
+                            revisions_en_attente.setdefault(rev['date'], []).append(rev)
+                        logger.debug(
+                            "  [%s] Principal %s : %d min",
+                            jour_courant, mat_principale_id, duree_p,
+                        )
+
+                # ═══════════════════════════════════════════════════════════════
+                # PRIORITÉ 2b — Sessions de découverte (depuis la file entrelacée)
+                # ═══════════════════════════════════════════════════════════════
+                #
+                # On consomme la file round-robin pour remplir le temps restant.
                 # Règles :
                 #   - Max 2 matières différentes par jour.
                 #     Si la session en tête est une 3ème matière, on tourne la file
@@ -774,7 +901,7 @@ class SessionConstructeur:
                         break
 
                     session = file_sessions.popleft()
-                    sessions_datees.append({
+                    buffer_tranche.append({
                         **session,
                         'date':            jour_courant,
                         'duree_minutes':   duree_effective,
@@ -793,6 +920,9 @@ class SessionConstructeur:
                     # Programmer les révisions espacées pour ce chapitre
                     for rev in reviseur.creer_revisions(session, jour_courant, date_fin):
                         revisions_en_attente.setdefault(rev['date'], []).append(rev)
+
+                # Regrouper les sessions de cette tranche par matière avant d'écrire
+                sessions_datees.extend(_grouper_par_matiere(buffer_tranche))
 
             # Révisions non placées aujourd'hui → reporter au lendemain
             # + créer une version optionnelle pour aujourd'hui (si l'élève a du temps libre)
@@ -849,10 +979,10 @@ class GenerateurPlan:
         Lève ValueError en français si un prérequis est manquant.
         Retourne le PlanEtude créé.
         """
-        logger.info("═══ DÉBUT GÉNÉRATION PLANNING — élève_id=%s ═══", eleve_id)
+        logger.info("=== DEBUT GENERATION PLANNING - eleve_id=%s ===", eleve_id)
 
         # ── 1. Vérification des prérequis ─────────────────────────────────────
-        logger.info("Étape 0 : Vérification des prérequis")
+        logger.info("Etape 0 : Verification des prerequis")
 
         try:
             eleve = Utilisateur.objects.get(id=eleve_id, role='eleve')
@@ -872,16 +1002,8 @@ class GenerateurPlan:
 
         if not ObjectifMatiere.objects.filter(eleve=eleve).exists():
             raise ValueError(
-                "Impossible de générer le planning : aucun objectif de note défini. "
-                "Complète l'étape des objectifs d'abord."
-            )
-
-        matieres_avec_diag = Matiere.objects.filter(
-            niveau=eleve.niveau, necessite_diagnostic=True
-        ).exists()
-        if matieres_avec_diag and not ResultatDiagnostic.objects.filter(eleve=eleve).exists():
-            raise ValueError(
-                "Impossible de générer le planning : le test de niveau n'a pas été passé."
+                "Impossible de générer le planning : aucun objectif défini. "
+                "Complète l'étape des objectifs et niveaux de difficulté d'abord."
             )
 
         try:
@@ -891,25 +1013,46 @@ class GenerateurPlan:
                 "Impossible de générer le planning : les disponibilités ne sont pas définies."
             )
 
-        logger.info("  Prérequis OK — élève : %s", eleve)
+        if not dispo.tranches.exists():
+            raise ValueError(
+                "Impossible de générer le planning : aucune tranche horaire définie. "
+                "Ajoute au moins un créneau de travail dans tes disponibilités."
+            )
+
+        logger.info("  Prerequis OK - eleve : %s", eleve)
 
         # ── 2. Suppression de l'ancien plan ───────────────────────────────────
         anciens = PlanEtude.objects.filter(eleve=eleve)
         nb_anciens = anciens.count()
         if nb_anciens > 0:
-            logger.info("Étape 1 : Suppression de l'ancien plan (%d plan(s))", nb_anciens)
+            logger.info("Etape 1 : Suppression de l'ancien plan (%d plan(s))", nb_anciens)
             anciens.delete()
 
-        # ── 3. Calcul des scores de priorité (V2) ─────────────────────────────
-        calculateur = PrioriteCalculateur()
-        scores = calculateur.calculer_score_v2(eleve)
+        # ── 3. Calcul des poids de priorité (V3) ──────────────────────────────
+        calculateur      = CalculateurPoids()
+        poids_par_matiere = calculateur.calculer_poids(eleve)
 
-        # ── 4. Répartition des heures disponibles ─────────────────────────────
+        if not poids_par_matiere:
+            raise ValueError(
+                "Impossible de générer le planning : aucune matière avec niveau de difficulté. "
+                "Complète l'étape des objectifs d'abord."
+            )
+
+        # ── 4. Assignation automatique des tranches aux matières ───────────────
+        #
+        # L'algorithme décide seul quelles tranches → quelles matières,
+        # selon les poids et la préférence matin/soir de l'élève.
+        # Cette étape écrit matiere_principale sur chaque TrancheHoraire.
+        #
+        logger.info("Etape 1b : Assignation automatique des tranches")
+        assigner_matieres_aux_tranches(dispo, poids_par_matiere)
+
+        # ── 5. Répartition des heures disponibles ─────────────────────────────
         date_debut   = date.today()
         total_heures = _calculer_total_heures(dispo, date_debut, eleve.date_examen)
 
         logger.info(
-            "  Période : %s → %s  (%.1fh disponibles)",
+            "  Periode : %s -> %s  (%.1fh disponibles)",
             date_debut.strftime('%d/%m/%Y'),
             eleve.date_examen.strftime('%d/%m/%Y'),
             total_heures,
@@ -921,9 +1064,9 @@ class GenerateurPlan:
                 "entre aujourd'hui et la date d'examen. Vérifie tes disponibilités."
             )
 
-        heures_par_matiere = calculateur.repartir_heures(scores, total_heures)
+        heures_par_matiere = calculateur.repartir_heures(poids_par_matiere, total_heures)
 
-        # ── 5. Construction des sessions entrelacées ──────────────────────────
+        # ── 6. Construction des sessions entrelacées ──────────────────────────
         constructeur        = SessionConstructeur()
         sessions_non_datees = constructeur.construire_sessions(eleve, heures_par_matiere)
 
@@ -933,15 +1076,15 @@ class GenerateurPlan:
                 "Vérifie que les chapitres des matières sont bien renseignés."
             )
 
-        # ── 6. Placement dans le calendrier ───────────────────────────────────
+        # ── 7. Placement dans le calendrier ───────────────────────────────────
         sessions_datees = constructeur.planifier_calendrier(eleve, sessions_non_datees)
 
-        # ── 7. Création du PlanEtude en base ──────────────────────────────────
-        logger.info("Étape 5 : Création du PlanEtude")
+        # ── 8. Création du PlanEtude en base ──────────────────────────────────
+        logger.info("Etape 5 : Creation du PlanEtude")
         plan = PlanEtude.objects.create(eleve=eleve, actif=True)
 
-        # ── 8. Création en masse des SessionEtude ─────────────────────────────
-        logger.info("Étape 6 : Enregistrement de %d sessions (bulk_create)", len(sessions_datees))
+        # ── 9. Création en masse des SessionEtude ─────────────────────────────
+        logger.info("Etape 6 : Enregistrement de %d sessions (bulk_create)", len(sessions_datees))
         SessionEtude.objects.bulk_create([
             SessionEtude(
                 plan=plan,
@@ -956,7 +1099,7 @@ class GenerateurPlan:
         ])
 
         logger.info(
-            "═══ PLANNING GÉNÉRÉ — %d sessions (%s → %s) ═══",
+            "=== PLANNING GENERE - %d sessions (%s -> %s) ===",
             len(sessions_datees),
             date_debut.strftime('%d/%m/%Y'),
             eleve.date_examen.strftime('%d/%m/%Y'),

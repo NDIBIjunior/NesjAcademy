@@ -31,7 +31,7 @@ def envoyer_code_verification(utilisateur) -> str:
     # ── Simulation SMS ──────────────────────────────────────────────────────
     ligne = "=" * 54
     print(f"\n{ligne}")
-    print(f"  [SMS SIMULÉ → {utilisateur.telephone}]")
+    print(f"  [SMS SIMULE -> {utilisateur.telephone}]")
     print(f"  Votre code NESJAcademy : {code}")
     print(f"  Ce code expire dans 10 minutes.")
     print(f"{ligne}\n")

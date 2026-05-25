@@ -154,7 +154,7 @@ class _EcranEmploiDuTempsState extends State<EcranEmploiDuTemps>
       }
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, Routes.bienvenue);
+      Navigator.pushReplacementNamed(context, Routes.resultatsDiagnostic);
     } catch (e) {
       setState(() {
         _erreur     = e.toString().replaceFirst('Exception: ', '');
@@ -164,7 +164,7 @@ class _EcranEmploiDuTempsState extends State<EcranEmploiDuTemps>
   }
 
   void _ignorer() =>
-      Navigator.pushReplacementNamed(context, Routes.bienvenue);
+      Navigator.pushReplacementNamed(context, Routes.resultatsDiagnostic);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
