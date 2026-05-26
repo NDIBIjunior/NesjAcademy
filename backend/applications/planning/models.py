@@ -216,6 +216,43 @@ class SessionEtude(models.Model):
         related_name='sessions_prevues',
     )
 
+    # ── Gestion des imprévus (report + dette mémorielle) ─────────────────────
+    MOTIF_MALADIE            = 'maladie'
+    MOTIF_OBLIGATION         = 'obligation_familiale'
+    MOTIF_SURCHARGE          = 'surcharge_scolaire'
+    MOTIF_FATIGUE            = 'fatigue'
+    MOTIF_AUTRE              = 'autre'
+    MOTIFS_REPORT = [
+        (MOTIF_MALADIE,    'Maladie / indisposition'),
+        (MOTIF_OBLIGATION, 'Obligation familiale ou sociale'),
+        (MOTIF_SURCHARGE,  'Surcharge scolaire (devoir urgent)'),
+        (MOTIF_FATIGUE,    'Fatigue / besoin de récupération'),
+        (MOTIF_AUTRE,      'Autre raison'),
+    ]
+
+    est_reportee = models.BooleanField(
+        default=False,
+        help_text="True si l'élève a reporté cette session à une date ultérieure",
+    )
+    motif_report = models.CharField(
+        max_length=30,
+        choices=MOTIFS_REPORT,
+        null=True, blank=True,
+        help_text="Raison du report saisie par l'élève",
+    )
+    date_originale = models.DateField(
+        null=True, blank=True,
+        help_text="Date initialement prévue avant le premier report",
+    )
+    dette_memorielle = models.FloatField(
+        null=True, blank=True,
+        help_text="Perte de rétention (0.0 à 1.0) calculée par la courbe d'Ebbinghaus",
+    )
+    est_micro_compensation = models.BooleanField(
+        default=False,
+        help_text="True = micro-session générée automatiquement pour compenser une dette mémorielle",
+    )
+
     class Meta:
         verbose_name = "Session d'Étude"
         verbose_name_plural = "Sessions d'Étude"

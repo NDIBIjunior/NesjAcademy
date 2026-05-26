@@ -10,6 +10,7 @@ import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/observateur_route.dart';
 import '../../noyau/theme.dart';
+import '../planning/ecran_report_session.dart';
 import '../seance/ecran_seance.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,8 +297,12 @@ class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
       children: [
-        // ── Prochaine séance ─────────────────────────────────────────────
-        const _LabelSection(texte: 'Prochaine séance'),
+        // ── Prochaine séance (ou rattrapage prioritaire) ─────────────────
+        _LabelSection(
+          texte: (sessionActuelle?['est_micro_compensation'] as bool? ?? false)
+              ? 'Rattrapage prioritaire'
+              : 'Prochaine séance',
+        ),
         const SizedBox(height: 12),
         sessionActuelle != null
             ? _CarteProchainSeance(
@@ -520,6 +525,18 @@ class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
     // automatiquement _rafraichir() dès que cette route redevient visible.
   }
 
+  void _reporter() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EcranReportSession(
+          session:   widget.session,
+          onReporte: widget.onSessionTerminee,
+        ),
+      ),
+    );
+  }
+
   static const _libellesType = {
     'decouverte':   'Découverte',
     'revision_j1':  'Révision J+1',
@@ -537,42 +554,130 @@ class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
 
   @override
   Widget build(BuildContext context) {
-    final chapitre   = widget.session['chapitre'] as Map<String, dynamic>;
-    final matiere    = chapitre['matiere_nom'] as String;
-    final titre      = chapitre['titre'] as String;
-    final duree      = widget.session['duree_minutes'] as int;
-    final type       = widget.session['type_session'] as String;
-    final libelle    = _libellesType[type] ?? type;
-    final estPilier  = widget.session['est_pilier'] as bool? ?? false;
-    final heureDebut = widget.session['heure_debut_session'] as String?;
-    final estRevision = type.startsWith('revision');
+    final chapitre        = widget.session['chapitre'] as Map<String, dynamic>;
+    final matiere         = chapitre['matiere_nom'] as String;
+    final titre           = chapitre['titre'] as String;
+    final duree           = widget.session['duree_minutes'] as int;
+    final type            = widget.session['type_session'] as String;
+    final libelle         = _libellesType[type] ?? type;
+    final estPilier       = widget.session['est_pilier']           as bool? ?? false;
+    final estRattrapage   = widget.session['est_micro_compensation'] as bool? ?? false;
+    final estReportee     = widget.session['est_reportee']          as bool? ?? false;
+    final detteNum        = widget.session['dette_memorielle'];
+    final dettePct        = detteNum != null
+        ? ((detteNum as num).toDouble() * 100).round()
+        : null;
+    final heureDebut      = widget.session['heure_debut_session'] as String?;
+    final estRevision     = type.startsWith('revision');
 
-    final couleurAccent = estPilier
-        ? const Color(0xFFD97706)
-        : estRevision
-            ? CouleurApp.jauneAccent
-            : CouleurApp.bleuPrincipal;
+    // Couleur dominante de la carte selon le contexte
+    const couleurRattrapage = Color(0xFFD97706); // orange ambré
+    const couleurBordeaux   = Color(0xFF9B1C1C); // bordeaux — séance reportée
+    final couleurAccent = estReportee
+        ? couleurBordeaux
+        : estRattrapage
+            ? couleurRattrapage
+            : estPilier
+                ? couleurRattrapage
+                : estRevision
+                    ? CouleurApp.jauneAccent
+                    : CouleurApp.bleuPrincipal;
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color:        CouleurApp.fondBlanc,
         borderRadius: BorderRadius.circular(16),
-        border:       Border.all(color: CouleurApp.bordure),
+        border: Border.all(
+          color: estReportee
+              ? couleurBordeaux.withValues(alpha: 0.40)
+              : estRattrapage
+                  ? couleurRattrapage.withValues(alpha: 0.40)
+                  : CouleurApp.bordure,
+          width: (estReportee || estRattrapage) ? 1.5 : 1.0,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Bandeau séance reportée ────────────────────────────────────────
+          if (estReportee) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: couleurBordeaux.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.update_rounded, color: couleurBordeaux, size: 16),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Séance reportée — prioritaire sur les autres',
+                      style: TextStyle(
+                        color:      couleurBordeaux,
+                        fontSize:   12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // ── Bandeau de rattrapage (visible uniquement pour micro-sessions) ─
+          if (estRattrapage) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: couleurRattrapage.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.priority_high_rounded,
+                      color: couleurRattrapage, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      dettePct != null
+                          ? 'Rattrapage obligatoire — $dettePct% de rétention perdue'
+                          : 'Rattrapage obligatoire — à faire avant ta révision',
+                      style: const TextStyle(
+                        color:      couleurRattrapage,
+                        fontSize:   12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
           // ── Badges ─────────────────────────────────────────────────────
           Wrap(
             spacing: 6,
             runSpacing: 6,
             children: [
               _PilleBadge(texte: matiere, couleur: couleurAccent),
-              if (estPilier)
+              if (estReportee)
+                _PilleBadge(texte: 'Reportée', couleur: couleurBordeaux),
+              if (estRattrapage)
+                _PilleBadge(
+                  texte: 'Remise à niveau',
+                  couleur: couleurRattrapage,
+                ),
+              if (estPilier && !estRattrapage)
                 _PilleBadge(
                   texte: 'Séance dédiée',
-                  couleur: const Color(0xFFD97706),
+                  couleur: couleurRattrapage,
                 ),
               _PilleBadge(
                 texte: libelle,
@@ -623,31 +728,62 @@ class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
           ),
           const SizedBox(height: 16),
 
-          // ── Bouton Démarrer avec animation ────────────────────────────
-          AnimatedScale(
-            scale:    _pressed ? 0.95 : 1.0,
-            duration: const Duration(milliseconds: 120),
-            curve:    Curves.easeOut,
-            child: SizedBox(
-              width:  double.infinity,
-              height: 44,
-              child: ElevatedButton(
-                onPressed: _demarrer,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: CouleurApp.bleuPrincipal,
-                  foregroundColor: Colors.white,
-                  elevation:  0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize:   15,
-                    fontWeight: FontWeight.w600,
+          // ── Boutons Démarrer / Reporter ───────────────────────────────
+          Row(
+            children: [
+              // Bouton Reporter — masqué pour les rattrapages et séances déjà reportées
+              if (!estRattrapage && !estReportee) ...[
+                OutlinedButton.icon(
+                  onPressed: _reporter,
+                  icon: const Icon(Icons.schedule_rounded, size: 16),
+                  label: const Text('Reporter'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: CouleurApp.texteGris,
+                    side: const BorderSide(color: CouleurApp.bordure),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize:   13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                   ),
                 ),
-                child: const Text('Démarrer'),
+                const SizedBox(width: 10),
+              ],
+              // Bouton principal
+              Expanded(
+                child: AnimatedScale(
+                  scale:    _pressed ? 0.95 : 1.0,
+                  duration: const Duration(milliseconds: 120),
+                  curve:    Curves.easeOut,
+                  child: SizedBox(
+                    height: 44,
+                    child: ElevatedButton(
+                      onPressed: _demarrer,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: estRattrapage
+                            ? const Color(0xFFD97706)
+                            : CouleurApp.bleuPrincipal,
+                        foregroundColor: Colors.white,
+                        elevation:  0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize:   15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: Text(
+                          estRattrapage ? 'Faire le rattrapage' : 'Démarrer'),
+                    ),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),
@@ -808,14 +944,23 @@ class _CarteSessionSimple extends StatelessWidget {
     final type       = session['type_session'] as String;
     final heureDebut = session['heure_debut_session'] as String?;
     final estRevision = type.startsWith('revision');
-    final couleur    = estRevision ? CouleurApp.jauneAccent : CouleurApp.bleuPrincipal;
+    final estReportee = session['est_reportee'] as bool? ?? false;
+    const couleurBordeaux = Color(0xFF9B1C1C);
+    final couleur = estReportee
+        ? couleurBordeaux
+        : (estRevision ? CouleurApp.jauneAccent : CouleurApp.bleuPrincipal);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color:        CouleurApp.fondBlanc,
         borderRadius: BorderRadius.circular(14),
-        border:       Border.all(color: CouleurApp.bordure),
+        border:       Border.all(
+          color: estReportee
+              ? couleurBordeaux.withValues(alpha: 0.35)
+              : CouleurApp.bordure,
+          width: estReportee ? 1.5 : 1.0,
+        ),
       ),
       child: Row(
         children: [
@@ -857,10 +1002,20 @@ class _CarteSessionSimple extends StatelessWidget {
               ],
             ),
           ),
-          // Heure + durée (droite)
+          // Heure + durée (droite) — + point bordeaux si reportée
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              if (estReportee)
+                Container(
+                  width: 7,
+                  height: 7,
+                  margin: const EdgeInsets.only(bottom: 4),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF9B1C1C),
+                    shape: BoxShape.circle,
+                  ),
+                ),
               if (heureDebut != null)
                 Text(
                   heureDebut,
@@ -1017,12 +1172,13 @@ class _VueHebdomadaire extends StatelessWidget {
                         final finStr    = s['heure_fin_session']   as String?;
 
                         return _BlocSessionSemaine(
-                          matiere:    matiere,
-                          couleur:    couleur,
-                          estPilier:  estPilier,
-                          completee:  s['completee'] as bool? ?? false,
-                          heureDebut: debutStr != null ? _fmtHeure(debutStr) : null,
-                          heureFin:   finStr   != null ? _fmtHeure(finStr)   : null,
+                          matiere:     matiere,
+                          couleur:     couleur,
+                          estPilier:   estPilier,
+                          completee:   s['completee']    as bool? ?? false,
+                          estReportee: s['est_reportee'] as bool? ?? false,
+                          heureDebut:  debutStr != null ? _fmtHeure(debutStr) : null,
+                          heureFin:    finStr   != null ? _fmtHeure(finStr)   : null,
                         );
                       }),
                   ],
@@ -1043,6 +1199,7 @@ class _BlocSessionSemaine extends StatelessWidget {
   final Color   couleur;
   final bool    estPilier;
   final bool    completee;
+  final bool    estReportee;
   final String? heureDebut;
   final String? heureFin;
 
@@ -1051,13 +1208,16 @@ class _BlocSessionSemaine extends StatelessWidget {
     required this.couleur,
     required this.estPilier,
     required this.completee,
+    required this.estReportee,
     this.heureDebut,
     this.heureFin,
   });
 
   @override
   Widget build(BuildContext context) {
-    final couleurEffective = completee ? CouleurApp.texteGris : couleur;
+    const couleurBordeaux  = Color(0xFF9B1C1C);
+    final couleurBase      = estReportee && !completee ? couleurBordeaux : couleur;
+    final couleurEffective = completee ? CouleurApp.texteGris : couleurBase;
 
     return Container(
       margin:  const EdgeInsets.only(bottom: 5),
@@ -1065,13 +1225,13 @@ class _BlocSessionSemaine extends StatelessWidget {
       decoration: BoxDecoration(
         color:        completee
             ? CouleurApp.fondClair
-            : couleur.withValues(alpha: 0.10),
+            : couleurBase.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: completee
               ? CouleurApp.bordure
-              : couleur.withValues(alpha: estPilier ? 0.55 : 0.25),
-          width: estPilier && !completee ? 1.5 : 1.0,
+              : couleurBase.withValues(alpha: estPilier ? 0.55 : 0.25),
+          width: (estPilier || estReportee) && !completee ? 1.5 : 1.0,
         ),
       ),
       child: Column(
@@ -1106,6 +1266,16 @@ class _BlocSessionSemaine extends StatelessWidget {
               if (completee)
                 const Icon(Icons.check_circle_rounded,
                     size: 10, color: Color(0xFF059669))
+              else if (estReportee)
+                Container(
+                  width: 7,
+                  height: 7,
+                  margin: const EdgeInsets.only(left: 2),
+                  decoration: const BoxDecoration(
+                    color: couleurBordeaux,
+                    shape: BoxShape.circle,
+                  ),
+                )
               else if (estPilier)
                 Padding(
                   padding: const EdgeInsets.only(left: 2),

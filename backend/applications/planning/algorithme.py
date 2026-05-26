@@ -84,6 +84,7 @@ from .models import (
     PlanEtude,
     ProgressionChapitre,
     SessionEtude,
+    TrancheHoraire,
 )
 
 logger = logging.getLogger(__name__)
@@ -1401,3 +1402,241 @@ class GenerateurPlan:
         )
 
         return plan
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GestionnaireImprevu — report de session avec calcul de dette mémorielle
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# SCIENCE : courbe d'oubli d'Ebbinghaus
+#   R(t) = e^(-t / S)
+#   R  = rétention mémorielle (0 à 1 = 0% à 100%)
+#   t  = délai de report en jours
+#   S  = stabilité mémorielle (dépend du type de session)
+#
+# Interprétation de S :
+#   Plus S est grand, plus la mémoire est stable et moins le report nuit.
+#   Une session de découverte (S=1) est très volatile → reporter d'un seul jour
+#   coûte déjà ~63% de rétention perdue.
+#   Une révision J+14 (S=30) est robuste → reporter d'une semaine ne coûte que ~21%.
+#
+# La "dette mémorielle" = 1 - R(délai) = fraction du contenu que l'élève
+# aura oubliée en plus par rapport à la révision faite à l'heure prévue.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class GestionnaireImprevu:
+    """
+    Gère le report d'une session d'étude avec :
+      1. Calcul de la dette mémorielle (Ebbinghaus)
+      2. Création automatique d'une micro-session compensatoire si nécessaire
+    """
+
+    # Stabilité mémorielle S par type de session (en jours)
+    # S mesure la résistance du souvenir à l'oubli (SM-2 / Ebbinghaus).
+    # Chaque révision réussie augmente S : la mémoire devient plus robuste.
+    #
+    # Lecture : au bout de S jours sans révision, la rétention tombe à ~37%.
+    # Exemples concrets avec les nouvelles valeurs :
+    #   decouverte  (S=2)  → délai 1j : 39% de perte | délai 3j : 78% de perte
+    #   revision_j3 (S=14) → délai 3j : 19% de perte | délai 7j : 39% de perte
+    #   revision_j14(S=35) → délai 7j : 18% de perte | délai 14j: 33% de perte
+    STABILITES = {
+        SessionEtude.REVISION_IMMEDIATE: 1.0,   # révision dans l'heure → très fragile
+        SessionEtude.DECOUVERTE:         2.0,   # 1er contact : volatile mais pas extrême
+        SessionEtude.REVISION_J1:        8.0,   # 1er rappel → ancrage initial
+        SessionEtude.REVISION_J3:        14.0,  # 2e rappel → mémoire en cours de consolidation
+        SessionEtude.REVISION_J7:        21.0,  # 3e rappel → mémoire moyen terme
+        SessionEtude.REVISION_J14:       35.0,  # 4e rappel → mémoire long terme robuste
+    }
+
+    @staticmethod
+    def calculer_retention(delai_jours: float, stabilite: float) -> float:
+        """
+        Formule d'Ebbinghaus : R(t) = e^(-t / S)
+        Retourne la fraction de contenu encore mémorisé après `delai_jours` de retard.
+        """
+        return math.exp(-delai_jours / stabilite)
+
+    def calculer_dette(self, session: 'SessionEtude', nouvelle_date: date) -> float:
+        """
+        Calcule la perte de rétention causée par le report.
+
+        Raisonnement :
+          - À la date prévue, l'élève révise au moment optimal → rétention = 100%
+          - Après N jours de retard, il révise avec R(N, S) de contenu mémorisé
+          - Dette = 1 - R(N, S)
+
+        Retourne : float entre 0.0 (aucune perte) et 0.80 (perte maximale plafonnée).
+        """
+        if nouvelle_date <= session.date_prevue:
+            return 0.0
+
+        S = self.STABILITES.get(session.type_session, 2.0)
+        delai = (nouvelle_date - session.date_prevue).days
+        dette = 1.0 - self.calculer_retention(delai, S)
+        return round(min(dette, 0.80), 4)   # plafond à 80 % pour rester réaliste
+
+    @staticmethod
+    def duree_micro_session(dette: float) -> int:
+        """
+        Durée de la micro-session compensatoire en minutes.
+        Proportionnelle à la dette. Minimum 15 min (en dessous c'est trop court
+        pour réactiver efficacement les traces mémorielles, selon les recherches
+        en psychologie cognitive).
+        """
+        if dette < 0.10:
+            return 0    # dette négligeable : pas de compensation nécessaire
+        if dette < 0.25:
+            return 15   # légère perte → remise à niveau express (15 min min.)
+        if dette < 0.45:
+            return 20   # perte modérée → remise à niveau standard
+        return 30       # perte forte → rattrapage complet
+
+    def suggerer_jour(self, session: 'SessionEtude', eleve) -> dict | None:
+        """
+        Recommande le meilleur jour pour reporter dans J+1 à J+7.
+
+        Critère 1 (prioritaire) : pas de matière HCC (necessite_exercices=True)
+                                   planifiée ce jour-là.
+        Critère 2               : le plus proche possible de aujourd'hui.
+
+        Retourne un dict ou None si aucun jour disponible.
+        """
+        aujourd_hui = date.today()
+
+        hcc_ids = {
+            o.matiere_id
+            for o in ObjectifMatiere.objects.filter(eleve=eleve).select_related('matiere')
+            if o.matiere.necessite_exercices
+        }
+
+        plan = session.plan
+        jours_candidats = []
+
+        for delta in range(1, 8):
+            jour_cible = aujourd_hui + timedelta(days=delta)
+            nom_jour   = _WEEKDAY_JOUR.get(jour_cible.weekday())
+            if not nom_jour:
+                continue
+
+            tranches = list(
+                TrancheHoraire.objects
+                .filter(disponibilite__eleve=eleve, jour=nom_jour)
+                .order_by('heure_debut')
+            )
+            if not tranches:
+                continue
+
+            # Un seul report par jour — évite la surcharge
+            est_sature = SessionEtude.objects.filter(
+                plan=plan,
+                date_prevue=jour_cible,
+                est_reportee=True,
+                completee=False,
+            ).exclude(id=session.id).exists()
+            if est_sature:
+                continue
+
+            has_hcc = (
+                SessionEtude.objects.filter(
+                    plan=plan,
+                    date_prevue=jour_cible,
+                    completee=False,
+                    chapitre__matiere_id__in=hcc_ids,
+                ).exists()
+                if hcc_ids else False
+            )
+
+            jours_candidats.append({
+                'date':     jour_cible,
+                'tranches': tranches,
+                'has_hcc':  has_hcc,
+            })
+
+        if not jours_candidats:
+            return None
+
+        jours_sans_hcc = [j for j in jours_candidats if not j['has_hcc']]
+        meilleur       = jours_sans_hcc[0] if jours_sans_hcc else jours_candidats[0]
+
+        return {
+            'date':    meilleur['date'],
+            'tranches': meilleur['tranches'],
+            'has_hcc': meilleur['has_hcc'],
+            'raison': (
+                'Aucune matière à haute charge cognitive prévue — idéal pour '
+                'récupérer sans surcharger ton cerveau'
+                if not meilleur['has_hcc']
+                else 'Jour le plus proche avec des créneaux disponibles'
+            ),
+        }
+
+    def reporter_session(
+        self,
+        session: 'SessionEtude',
+        nouvelle_date: date,
+        motif: str,
+        tranche_horaire=None,
+    ) -> dict:
+        """
+        Option A — déplace toute la session vers nouvelle_date + tranche_horaire.
+
+        Pas de micro-session créée : la séance est simplement déplacée.
+        Les sessions déjà dans la tranche cible ce jour-là débordent en cascade
+        (elles commencent après la session reportée, même hors de la tranche).
+
+        Retourne un dict :
+          {
+            'session'            : SessionEtude mis à jour,
+            'dette_memorielle'   : float (0.0 – 0.80),
+            'sessions_decalees'  : int,
+            'minutes_debordement': int,
+          }
+        """
+        dette = self.calculer_dette(session, nouvelle_date)
+
+        if not session.est_reportee:
+            session.date_originale = session.date_prevue
+
+        session.date_prevue      = nouvelle_date
+        session.tranche_horaire  = tranche_horaire
+        session.motif_report     = motif
+        session.est_reportee     = True
+        session.dette_memorielle = dette
+        session.save(update_fields=[
+            'date_prevue', 'tranche_horaire', 'motif_report',
+            'est_reportee', 'dette_memorielle', 'date_originale',
+        ])
+
+        sessions_decalees   = 0
+        minutes_debordement = 0
+
+        if tranche_horaire:
+            autres = list(
+                SessionEtude.objects.filter(
+                    plan=session.plan,
+                    date_prevue=nouvelle_date,
+                    tranche_horaire=tranche_horaire,
+                    completee=False,
+                ).exclude(id=session.id).order_by('id')
+            )
+            minutes_occupees = session.duree_minutes
+            capacite         = tranche_horaire.duree_minutes
+
+            for s in autres:
+                if minutes_occupees < capacite:
+                    restant = capacite - minutes_occupees
+                    if s.duree_minutes > restant:
+                        sessions_decalees   += 1
+                        minutes_debordement += s.duree_minutes - restant
+                    minutes_occupees += s.duree_minutes
+                else:
+                    sessions_decalees   += 1
+                    minutes_debordement += s.duree_minutes
+
+        return {
+            'session'            : session,
+            'dette_memorielle'   : dette,
+            'sessions_decalees'  : sessions_decalees,
+            'minutes_debordement': minutes_debordement,
+        }

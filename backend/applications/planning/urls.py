@@ -11,6 +11,7 @@ from .views import (
     VuePlanningHebdomadaire,
     VuePositionProgramme,
     VueProgressionDetaillee,
+    VueReporterSession,
     VueResumePlan,
 )
 
@@ -39,4 +40,5 @@ urlpatterns = [
 
     # Actions sur les sessions
     path("sessions/<int:id>/completer/", VueCompleterSession.as_view(), name="session-completer"),
+    path("sessions/<int:id>/reporter/",  VueReporterSession.as_view(),  name="session-reporter"),
 ]

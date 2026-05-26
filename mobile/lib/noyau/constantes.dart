@@ -34,6 +34,10 @@ abstract class Constantes {
   static const String urlSessions          = '$_base/planning/sessions/';
   static const String urlPositionProgramme = '$_base/planning/position-programme/';
 
+  // Imprévus — helpers pour construire les URLs d'action sur session
+  // Usage : '${Constantes.urlSessions}$id/reporter/'
+  //         '${Constantes.urlSessions}$id/completer/'
+
   // Diagnostic
   static const String urlMatieresDiagnostic = '$_base/diagnostic/matieres/';
   static const String urlDemarrerQuiz       = '$_base/diagnostic/demarrer/';

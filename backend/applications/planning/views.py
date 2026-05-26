@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .algorithme import GenerateurPlan, RevisionEspacee, recalibrer_sessions_matiere
+from .algorithme import GenerateurPlan, GestionnaireImprevu, RevisionEspacee, _WEEKDAY_JOUR, recalibrer_sessions_matiere
 from .conseiller import ConseillerDisponibilite
 from .models import (
     Chapitre,
@@ -29,6 +29,12 @@ from .serializers import (
     ObjectifMatiereSerializer,
     TrancheHoraireSerializer,
 )
+
+
+_NOM_JOUR_FR = {
+    0: 'Lundi', 1: 'Mardi', 2: 'Mercredi', 3: 'Jeudi',
+    4: 'Vendredi', 5: 'Samedi', 6: 'Dimanche',
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,8 +94,12 @@ def _serialiser_session(session, heure_debut_session=None, heure_fin_session=Non
         "est_pilier":          session.est_pilier,
         "date_prevue":         session.date_prevue.isoformat(),
         "tranche":             tranche,
-        "heure_debut_session": heure_debut_session,
-        "heure_fin_session":   heure_fin_session,
+        "heure_debut_session":    heure_debut_session,
+        "heure_fin_session":      heure_fin_session,
+        "est_reportee":           session.est_reportee,
+        "motif_report":           session.motif_report,
+        "dette_memorielle":       session.dette_memorielle,
+        "est_micro_compensation": session.est_micro_compensation,
     }
 
 
@@ -391,11 +401,14 @@ class VuePlanningAujourdhui(APIView):
             )
 
         aujourd_hui = date.today()
+        # Les micro-sessions de rattrapage (est_micro_compensation=True) passent
+        # en premier : l'élève doit les faire AVANT sa révision principale.
+        # Ensuite tri par tranche horaire puis par id (ordre de création).
         sessions = list(
             SessionEtude.objects
             .filter(plan=plan, date_prevue=aujourd_hui)
             .select_related("chapitre__matiere", "tranche_horaire")
-            .order_by("tranche_horaire__heure_debut", "id")
+            .order_by("tranche_horaire__heure_debut", "-est_reportee", "-est_micro_compensation", "id")
         )
 
         horaires = _calculer_horaires(sessions)
@@ -460,7 +473,7 @@ class VuePlanningHebdomadaire(APIView):
             SessionEtude.objects
             .filter(plan=plan, date_prevue__range=(date_debut, date_fin))
             .select_related("chapitre__matiere", "tranche_horaire")
-            .order_by("date_prevue", "tranche_horaire__heure_debut", "id")
+            .order_by("date_prevue", "tranche_horaire__heure_debut", "-est_reportee", "-est_micro_compensation", "id")
         )
 
         horaires = _calculer_horaires(sessions)
@@ -1025,3 +1038,257 @@ class VuePositionProgramme(APIView):
             {"message": f"Position mise à jour : {chapitre.titre}"},
             status=status.HTTP_200_OK,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 9 : Reporter une session — Option A (déplacement intelligent + cascade)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueReporterSession(APIView):
+    """
+    GET  /api/planning/sessions/{id}/reporter/
+         Suggestion intelligente du meilleur jour (J+1–J+7) :
+         jour sans matière HCC + le plus proche. Retourne aussi les tranches
+         disponibles et la dette mémorielle estimée pour ce jour.
+
+    GET  /api/planning/sessions/{id}/reporter/?nouvelle_date=YYYY-MM-DD
+         Dette mémorielle + tranches disponibles ce jour précis.
+         Utilisé quand l'élève refuse la suggestion et choisit sa propre date.
+
+    POST /api/planning/sessions/{id}/reporter/
+         Corps : { "motif": "...", "nouvelle_date": "YYYY-MM-DD", "tranche_horaire_id": N }
+         Déplace la session vers le nouveau créneau.
+         Les séances existantes dans la tranche cible débordent en cascade.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    _MOTIFS_VALIDES = {m[0] for m in SessionEtude.MOTIFS_REPORT}
+
+    def _get_session(self, request, id):
+        try:
+            return (
+                SessionEtude.objects
+                .select_related('plan', 'plan__eleve', 'chapitre__matiere', 'tranche_horaire')
+                .get(id=id, plan__eleve=request.user)
+            )
+        except SessionEtude.DoesNotExist:
+            return None
+
+    def _parse_date(self, valeur):
+        try:
+            return date.fromisoformat(valeur)
+        except (ValueError, TypeError):
+            return None
+
+    def _tranches_pour_jour(self, eleve, plan, session, jour_cible):
+        """
+        Retourne {'sature': bool, 'tranches': [...]}.
+
+        sature=True  → ce jour a déjà une séance reportée non complétée ;
+                       on bloque l'ajout d'un 2ème report pour éviter la surcharge.
+        """
+        nom_jour = _WEEKDAY_JOUR.get(jour_cible.weekday())
+        if not nom_jour:
+            return {'sature': False, 'tranches': []}
+
+        est_sature = SessionEtude.objects.filter(
+            plan=plan,
+            date_prevue=jour_cible,
+            est_reportee=True,
+            completee=False,
+        ).exclude(id=session.id).exists()
+
+        if est_sature:
+            return {'sature': True, 'tranches': []}
+
+        tranches = TrancheHoraire.objects.filter(
+            disponibilite__eleve=eleve, jour=nom_jour,
+        ).order_by('heure_debut')
+        result = []
+        for t in tranches:
+            nb = SessionEtude.objects.filter(
+                plan=plan,
+                date_prevue=jour_cible,
+                tranche_horaire=t,
+                completee=False,
+            ).exclude(id=session.id).count()
+            result.append({
+                'id':                     t.id,
+                'heure_debut':            t.heure_debut.strftime('%H:%M'),
+                'heure_fin':              t.heure_fin.strftime('%H:%M'),
+                'duree_minutes':          t.duree_minutes,
+                'nb_sessions_existantes': nb,
+            })
+        return {'sature': False, 'tranches': result}
+
+    def get(self, request, id):
+        session = self._get_session(request, id)
+        if not session:
+            return Response({'erreur': 'Session introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        eleve        = request.user
+        aujourd_hui  = date.today()
+        date_limite  = aujourd_hui + timedelta(days=7)
+        gestionnaire = GestionnaireImprevu()
+        nouvelle_date_str = request.query_params.get('nouvelle_date')
+
+        if nouvelle_date_str:
+            # ── Mode 2 : dette + tranches pour un jour choisi manuellement ──
+            nouvelle_date = self._parse_date(nouvelle_date_str)
+            if not nouvelle_date:
+                return Response(
+                    {'erreur': 'Paramètre nouvelle_date invalide (YYYY-MM-DD).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if nouvelle_date > date_limite:
+                return Response(
+                    {'erreur': f'La date doit être dans les 7 prochains jours (avant le {date_limite.isoformat()}).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            dette = gestionnaire.calculer_dette(session, nouvelle_date)
+            infos = self._tranches_pour_jour(eleve, session.plan, session, nouvelle_date)
+            return Response({
+                'date':                 nouvelle_date.isoformat(),
+                'dette_memorielle':     dette,
+                'dette_pourcentage':    round(dette * 100, 1),
+                'message_impact':       _message_dette(dette),
+                'jour_sature':          infos['sature'],
+                'tranches_disponibles': infos['tranches'],
+            })
+
+        # ── Mode 1 : suggestion intelligente (aucun paramètre) ──────────────
+        suggestion = gestionnaire.suggerer_jour(session, eleve)
+
+        if not suggestion:
+            return Response({
+                'suggestion': None,
+                'date_limite': date_limite.isoformat(),
+                'erreur_suggestion': 'Aucun créneau disponible dans les 7 prochains jours.',
+            })
+
+        jour_suggere = suggestion['date']
+        dette = gestionnaire.calculer_dette(session, jour_suggere)
+        infos = self._tranches_pour_jour(eleve, session.plan, session, jour_suggere)
+
+        return Response({
+            'suggestion': {
+                'date':              jour_suggere.isoformat(),
+                'jour_semaine':      _NOM_JOUR_FR.get(jour_suggere.weekday(), ''),
+                'raison':            suggestion['raison'],
+                'has_hcc':           suggestion['has_hcc'],
+                'jour_sature':       infos['sature'],
+                'tranches':          infos['tranches'],
+                'dette_memorielle':  dette,
+                'dette_pourcentage': round(dette * 100, 1),
+                'message_impact':    _message_dette(dette),
+            },
+            'date_limite': date_limite.isoformat(),
+        })
+
+    def post(self, request, id):
+        """Confirmation du report."""
+        session = self._get_session(request, id)
+        if not session:
+            return Response({'erreur': 'Session introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if session.completee:
+            return Response(
+                {'erreur': 'Impossible de reporter une session déjà complétée.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if session.est_reportee:
+            return Response(
+                {'erreur': 'Cette session a déjà été reportée une fois.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        motif              = request.data.get('motif', SessionEtude.MOTIF_AUTRE)
+        nouvelle_date      = self._parse_date(request.data.get('nouvelle_date'))
+        tranche_horaire_id = request.data.get('tranche_horaire_id')
+
+        if not nouvelle_date:
+            return Response(
+                {'erreur': 'Le champ nouvelle_date est obligatoire (YYYY-MM-DD).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if motif not in self._MOTIFS_VALIDES:
+            return Response(
+                {'erreur': f'Motif invalide. Valeurs acceptées : {", ".join(sorted(self._MOTIFS_VALIDES))}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        aujourd_hui = date.today()
+        date_limite = aujourd_hui + timedelta(days=7)
+
+        if nouvelle_date <= session.date_prevue:
+            return Response(
+                {'erreur': 'La nouvelle date doit être postérieure à la date actuelle de la session.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if nouvelle_date > date_limite:
+            return Response(
+                {'erreur': f'Le report doit se faire dans les 7 prochains jours (avant le {date_limite.isoformat()}).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Vérification saturation : un seul report par jour autorisé
+        est_sature = SessionEtude.objects.filter(
+            plan=session.plan,
+            date_prevue=nouvelle_date,
+            est_reportee=True,
+            completee=False,
+        ).exclude(id=session.id).exists()
+        if est_sature:
+            return Response(
+                {'erreur': 'Ce jour a déjà une séance reportée. '
+                           'Choisissez un autre jour pour éviter la surcharge.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tranche_horaire = None
+        if tranche_horaire_id:
+            try:
+                tranche_horaire = TrancheHoraire.objects.get(
+                    id=tranche_horaire_id,
+                    disponibilite__eleve=request.user,
+                )
+            except TrancheHoraire.DoesNotExist:
+                return Response(
+                    {'erreur': 'Tranche horaire introuvable ou non autorisée.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        resultat = GestionnaireImprevu().reporter_session(
+            session, nouvelle_date, motif, tranche_horaire=tranche_horaire,
+        )
+
+        return Response({
+            'message':             'Session reportée avec succès.',
+            'session':             _serialiser_session(resultat['session']),
+            'dette_memorielle':    resultat['dette_memorielle'],
+            'dette_pourcentage':   round(resultat['dette_memorielle'] * 100, 1),
+            'sessions_decalees':   resultat['sessions_decalees'],
+            'minutes_debordement': resultat['minutes_debordement'],
+            'message_impact':      _message_dette(resultat['dette_memorielle']),
+        }, status=status.HTTP_200_OK)
+
+
+def _message_dette(dette: float) -> str:
+    """Message lisible sur la dette mémorielle — affiché dans l'app mobile."""
+    if dette < 0.10:
+        return "Impact négligeable sur ta mémoire."
+    if dette < 0.25:
+        return (
+            f"Tu perdras environ {round(dette * 100)}% de rétention. "
+            "Révise activement dès que tu reprends cette séance."
+        )
+    if dette < 0.40:
+        return (
+            f"{round(dette * 100)}% du contenu risque de s'effacer. "
+            "Prévois une session de révision active et concentrée."
+        )
+    return (
+        f"Report important : {round(dette * 100)}% de contenu risque d'être oublié. "
+        "Cette séance nécessitera plus d'effort — sois bien reposé(e)."
+    )
