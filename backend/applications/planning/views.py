@@ -100,6 +100,7 @@ def _serialiser_session(session, heure_debut_session=None, heure_fin_session=Non
         "motif_report":           session.motif_report,
         "dette_memorielle":       session.dette_memorielle,
         "est_micro_compensation": session.est_micro_compensation,
+        "decalage_minutes":       getattr(session, 'decalage_minutes', 0) or 0,
     }
 
 
@@ -109,10 +110,11 @@ def _calculer_horaires(sessions):
     de fin à l'intérieur de sa tranche en accumulant les durées.
     Retourne {session.id: ("HH:MM", "HH:MM")}.
     Sessions attendues ordonnées par (date_prevue, tranche_horaire__heure_debut, id).
+    Le champ decalage_minutes d'une session décale son propre début (et fait
+    cascader toutes les sessions suivantes dans la même tranche).
     """
     from datetime import datetime, timedelta as td
     horaires = {}
-    # Curseur par (date, tranche_id)
     curseurs = {}
     for s in sessions:
         if not s.tranche_horaire_id:
@@ -120,6 +122,10 @@ def _calculer_horaires(sessions):
         key = (s.date_prevue, s.tranche_horaire_id)
         if key not in curseurs:
             curseurs[key] = datetime.combine(s.date_prevue, s.tranche_horaire.heure_debut)
+        # Le décalage s'applique AU CURSEUR avant cette session — cascade automatique
+        decalage = getattr(s, 'decalage_minutes', 0) or 0
+        if decalage:
+            curseurs[key] += td(minutes=decalage)
         debut = curseurs[key]
         fin   = debut + td(minutes=s.duree_minutes)
         horaires[s.id] = (debut.strftime('%H:%M'), fin.strftime('%H:%M'))
@@ -1271,6 +1277,139 @@ class VueReporterSession(APIView):
             'sessions_decalees':   resultat['sessions_decalees'],
             'minutes_debordement': resultat['minutes_debordement'],
             'message_impact':      _message_dette(resultat['dette_memorielle']),
+        }, status=status.HTTP_200_OK)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 10 : Décaler une session (imprévu same-day)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueDecalerSession(APIView):
+    """
+    GET  /api/planning/sessions/{id}/decaler/
+         Retourne l'heure actuelle de la session et les options de décalage disponibles.
+
+    POST /api/planning/sessions/{id}/decaler/
+         Corps : { "duree_decalage_minutes": 60 }
+         Enregistre le décalage. La session et toutes celles qui suivent dans la
+         même tranche commencent plus tard (cascade automatique via _calculer_horaires).
+    """
+
+    permission_classes = [IsAuthenticated]
+    _OPTIONS_MINUTES   = [15, 30, 60, 90, 120]
+
+    def _get_session(self, request, id):
+        try:
+            return (
+                SessionEtude.objects
+                .select_related('plan', 'plan__eleve', 'chapitre__matiere', 'tranche_horaire')
+                .get(id=id, plan__eleve=request.user)
+            )
+        except SessionEtude.DoesNotExist:
+            return None
+
+    def _valider_session(self, session):
+        """Retourne un message d'erreur ou None si tout est OK."""
+        if session.date_prevue != date.today():
+            return 'Le décalage n\'est possible que pour les sessions du jour.'
+        if session.completee:
+            return 'Impossible de décaler une session déjà complétée.'
+        if session.decalage_minutes > 0:
+            return 'Cette session a déjà été décalée.'
+        return None
+
+    def get(self, request, id):
+        from datetime import datetime as dt, timedelta as td
+
+        session = self._get_session(request, id)
+        if not session:
+            return Response({'erreur': 'Session introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        erreur = self._valider_session(session)
+        if erreur:
+            return Response({'erreur': erreur}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Horaires du jour pour connaître l'heure de début réelle de cette session
+        sessions_du_jour = list(
+            SessionEtude.objects
+            .filter(plan=session.plan, date_prevue=date.today())
+            .select_related('chapitre__matiere', 'tranche_horaire')
+            .order_by('tranche_horaire__heure_debut', '-est_reportee', '-est_micro_compensation', 'id')
+        )
+        horaires = _calculer_horaires(sessions_du_jour)
+        debut_actuel_str = horaires.get(session.id, (None, None))[0]
+
+        # Compter les sessions qui cascaderont (même tranche, après celle-ci)
+        nb_impactes = 0
+        if session.tranche_horaire_id:
+            apres = False
+            for s in sessions_du_jour:
+                if s.id == session.id:
+                    apres = True
+                    continue
+                if apres and s.tranche_horaire_id == session.tranche_horaire_id and not s.completee:
+                    nb_impactes += 1
+
+        # Construire les options de décalage avec la nouvelle heure calculée
+        options = []
+        if debut_actuel_str:
+            debut_dt = dt.combine(date.today(), dt.strptime(debut_actuel_str, '%H:%M').time())
+            for minutes in self._OPTIONS_MINUTES:
+                nouvelle_dt = debut_dt + td(minutes=minutes)
+                if nouvelle_dt.hour >= 23 and nouvelle_dt.minute > 30:
+                    break  # ne pas dépasser 23h30
+                options.append({
+                    'minutes':        minutes,
+                    'nouvelle_heure': nouvelle_dt.strftime('%H:%M'),
+                })
+        else:
+            options = [{'minutes': m, 'nouvelle_heure': None} for m in self._OPTIONS_MINUTES]
+
+        return Response({
+            'session_id':            session.id,
+            'heure_debut_actuelle':  debut_actuel_str,
+            'options_decalage':      options,
+            'nb_sessions_impactees': nb_impactes,
+        })
+
+    def post(self, request, id):
+        session = self._get_session(request, id)
+        if not session:
+            return Response({'erreur': 'Session introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        erreur = self._valider_session(session)
+        if erreur:
+            return Response({'erreur': erreur}, status=status.HTTP_400_BAD_REQUEST)
+
+        duree = request.data.get('duree_decalage_minutes')
+        if not isinstance(duree, int) or duree <= 0 or duree > 180:
+            return Response(
+                {'erreur': 'duree_decalage_minutes doit être un entier entre 1 et 180.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session.decalage_minutes = duree
+        session.save(update_fields=['decalage_minutes'])
+
+        # Recalculer les horaires pour retourner la nouvelle heure
+        sessions_du_jour = list(
+            SessionEtude.objects
+            .filter(plan=session.plan, date_prevue=date.today())
+            .select_related('chapitre__matiere', 'tranche_horaire')
+            .order_by('tranche_horaire__heure_debut', '-est_reportee', '-est_micro_compensation', 'id')
+        )
+        horaires = _calculer_horaires(sessions_du_jour)
+        debut, fin = horaires.get(session.id, (None, None))
+
+        h, m = divmod(duree, 60)
+        label = f'{h}h{m:02d}' if h and m else (f'{h}h' if h else f'{m} min')
+
+        return Response({
+            'message':                f'Séance décalée de {label}.',
+            'session':                _serialiser_session(session, debut, fin),
+            'nouvelle_heure_debut':   debut,
+            'nouvelle_heure_fin':     fin,
+            'duree_decalage_minutes': duree,
         }, status=status.HTTP_200_OK)
 
 

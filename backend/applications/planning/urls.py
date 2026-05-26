@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     VueCompleterSession,
+    VueDecalerSession,
     VueDisponibilite,
     VueEmploiDuTemps,
     VueGenererPlan,
@@ -41,4 +42,5 @@ urlpatterns = [
     # Actions sur les sessions
     path("sessions/<int:id>/completer/", VueCompleterSession.as_view(), name="session-completer"),
     path("sessions/<int:id>/reporter/",  VueReporterSession.as_view(),  name="session-reporter"),
+    path("sessions/<int:id>/decaler/",   VueDecalerSession.as_view(),   name="session-decaler"),
 ]

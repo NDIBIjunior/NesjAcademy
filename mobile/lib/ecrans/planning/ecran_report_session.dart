@@ -184,14 +184,19 @@ class _EcranReportSessionState extends State<EcranReportSession> {
         final debordement = data['minutes_debordement'] as int? ?? 0;
 
         if (nbDecalees > 0) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-              '$nbDecalees séance(s) décalée(s) — '
-              '+$debordement min en dehors du créneau.',
-            ),
-            backgroundColor: const Color(0xFFF59E0B),
-            duration: const Duration(seconds: 5),
-          ));
+          ToastApp.afficher(
+            context,
+            message: '$nbDecalees séance(s) décalée(s) en cascade — '
+                '+$debordement min hors créneau.',
+            type:  ToastType.info,
+            duree: const Duration(seconds: 5),
+          );
+        } else {
+          ToastApp.afficher(
+            context,
+            message: 'Séance reportée avec succès.',
+            type: ToastType.succes,
+          );
         }
 
         Navigator.pop(context);
@@ -606,30 +611,39 @@ class _CarteJourSuggere extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: onRefuser,
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: CouleurApp.bordure),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: SizedBox(
+                    height: 44,
+                    child: ElevatedButton(
+                      onPressed: onRefuser,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF3F4F6),
+                        foregroundColor: CouleurApp.texteGris,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text(
+                        'Choisir moi-même',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
                     ),
-                    child: const Text('Choisir moi-même',
-                        style: TextStyle(
-                            color: CouleurApp.texteGris, fontSize: 12)),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: onAccepter,
-                    icon: const Icon(Icons.check_rounded, size: 16),
-                    label: const Text('Accepter', style: TextStyle(fontSize: 12)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: CouleurApp.bleuPrincipal,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: SizedBox(
+                    height: 44,
+                    child: ElevatedButton.icon(
+                      onPressed: onAccepter,
+                      icon: const Icon(Icons.check_rounded, size: 16),
+                      label: const Text('Accepter', style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: CouleurApp.bleuPrincipal,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
                     ),
                   ),
                 ),

@@ -10,6 +10,7 @@ import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/observateur_route.dart';
 import '../../noyau/theme.dart';
+import '../planning/ecran_decaler_session.dart';
 import '../planning/ecran_report_session.dart';
 import '../seance/ecran_seance.dart';
 
@@ -537,6 +538,18 @@ class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
     );
   }
 
+  void _decaler() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EcranDecalerSession(
+          session:  widget.session,
+          onDecale: widget.onSessionTerminee,
+        ),
+      ),
+    );
+  }
+
   static const _libellesType = {
     'decouverte':   'Découverte',
     'revision_j1':  'Révision J+1',
@@ -728,58 +741,94 @@ class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
           ),
           const SizedBox(height: 16),
 
-          // ── Boutons Démarrer / Reporter ───────────────────────────────
-          Row(
+          // ── Boutons imprévus + Démarrer ───────────────────────────────
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Bouton Reporter — masqué pour les rattrapages et séances déjà reportées
+              // Ligne Décaler / Reporter — visibles uniquement si la séance
+              // n'est ni un rattrapage ni déjà reportée
               if (!estRattrapage && !estReportee) ...[
-                OutlinedButton.icon(
-                  onPressed: _reporter,
-                  icon: const Icon(Icons.schedule_rounded, size: 16),
-                  label: const Text('Reporter'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: CouleurApp.texteGris,
-                    side: const BorderSide(color: CouleurApp.bordure),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize:   13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                  ),
-                ),
-                const SizedBox(width: 10),
-              ],
-              // Bouton principal
-              Expanded(
-                child: AnimatedScale(
-                  scale:    _pressed ? 0.95 : 1.0,
-                  duration: const Duration(milliseconds: 120),
-                  curve:    Curves.easeOut,
-                  child: SizedBox(
-                    height: 44,
-                    child: ElevatedButton(
-                      onPressed: _demarrer,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: estRattrapage
-                            ? const Color(0xFFD97706)
-                            : CouleurApp.bleuPrincipal,
-                        foregroundColor: Colors.white,
-                        elevation:  0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize:   15,
-                          fontWeight: FontWeight.w600,
+                Row(
+                  children: [
+                    // Décaler (imprévu same-day) — masqué si déjà décalée
+                    if ((widget.session['decalage_minutes'] as int? ?? 0) == 0)
+                      Expanded(
+                        child: SizedBox(
+                          height: 44,
+                          child: ElevatedButton.icon(
+                            onPressed: _decaler,
+                            icon: const Icon(Icons.timelapse_rounded, size: 16),
+                            label: const Text('Décaler'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFD97706),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              textStyle: const TextStyle(
+                                fontSize:   13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                      child: Text(
-                          estRattrapage ? 'Faire le rattrapage' : 'Démarrer'),
+                    if ((widget.session['decalage_minutes'] as int? ?? 0) == 0)
+                      const SizedBox(width: 8),
+                    // Reporter (autre jour)
+                    Expanded(
+                      child: SizedBox(
+                        height: 44,
+                        child: ElevatedButton.icon(
+                          onPressed: _reporter,
+                          icon: const Icon(Icons.schedule_rounded, size: 16),
+                          label: const Text('Reporter'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4B5563),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize:   13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+
+              // Démarrer — toujours pleine largeur
+              AnimatedScale(
+                scale:    _pressed ? 0.95 : 1.0,
+                duration: const Duration(milliseconds: 120),
+                curve:    Curves.easeOut,
+                child: SizedBox(
+                  height: 44,
+                  child: ElevatedButton(
+                    onPressed: _demarrer,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: estRattrapage
+                          ? const Color(0xFFD97706)
+                          : CouleurApp.bleuPrincipal,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize:   15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    child: Text(
+                        estRattrapage ? 'Faire le rattrapage' : 'Démarrer'),
                   ),
                 ),
               ),

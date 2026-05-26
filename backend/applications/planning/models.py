@@ -253,6 +253,12 @@ class SessionEtude(models.Model):
         help_text="True = micro-session générée automatiquement pour compenser une dette mémorielle",
     )
 
+    # ── Décalage same-day (imprévu de dernière minute) ───────────────────────
+    decalage_minutes = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Retard en minutes appliqué au début de la session le jour J — imprévu same-day",
+    )
+
     class Meta:
         verbose_name = "Session d'Étude"
         verbose_name_plural = "Sessions d'Étude"
