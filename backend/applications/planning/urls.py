@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    VueAbandonnerSession,
     VueCompleterSession,
     VueDecalerSession,
     VueDisponibilite,
@@ -14,6 +15,7 @@ from .views import (
     VueProgressionDetaillee,
     VueReporterSession,
     VueResumePlan,
+    VueSeancesRetard,
 )
 
 urlpatterns = [
@@ -39,8 +41,12 @@ urlpatterns = [
     # Position dans le programme (suivi prof)
     path("position-programme/", VuePositionProgramme.as_view(), name="planning-position-programme"),
 
+    # Séances en retard
+    path("retard/", VueSeancesRetard.as_view(), name="planning-retard"),
+
     # Actions sur les sessions
-    path("sessions/<int:id>/completer/", VueCompleterSession.as_view(), name="session-completer"),
-    path("sessions/<int:id>/reporter/",  VueReporterSession.as_view(),  name="session-reporter"),
-    path("sessions/<int:id>/decaler/",   VueDecalerSession.as_view(),   name="session-decaler"),
+    path("sessions/<int:id>/completer/",   VueCompleterSession.as_view(),   name="session-completer"),
+    path("sessions/<int:id>/reporter/",    VueReporterSession.as_view(),    name="session-reporter"),
+    path("sessions/<int:id>/decaler/",     VueDecalerSession.as_view(),     name="session-decaler"),
+    path("sessions/<int:id>/abandonner/",  VueAbandonnerSession.as_view(),  name="session-abandonner"),
 ]

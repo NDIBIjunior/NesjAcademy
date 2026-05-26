@@ -259,6 +259,12 @@ class SessionEtude(models.Model):
         help_text="Retard en minutes appliqué au début de la session le jour J — imprévu same-day",
     )
 
+    # ── Abandon (séance ratée, définitivement non récupérée) ─────────────────
+    est_abandonnee = models.BooleanField(
+        default=False,
+        help_text="True si l'élève a délibérément renoncé à rattraper cette séance manquée",
+    )
+
     class Meta:
         verbose_name = "Session d'Étude"
         verbose_name_plural = "Sessions d'Étude"

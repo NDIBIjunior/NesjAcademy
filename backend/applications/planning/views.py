@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -101,6 +102,7 @@ def _serialiser_session(session, heure_debut_session=None, heure_fin_session=Non
         "dette_memorielle":       session.dette_memorielle,
         "est_micro_compensation": session.est_micro_compensation,
         "decalage_minutes":       getattr(session, 'decalage_minutes', 0) or 0,
+        "est_abandonnee":         getattr(session, 'est_abandonnee', False),
     }
 
 
@@ -412,7 +414,7 @@ class VuePlanningAujourdhui(APIView):
         # Ensuite tri par tranche horaire puis par id (ordre de création).
         sessions = list(
             SessionEtude.objects
-            .filter(plan=plan, date_prevue=aujourd_hui)
+            .filter(plan=plan, date_prevue=aujourd_hui, est_abandonnee=False)
             .select_related("chapitre__matiere", "tranche_horaire")
             .order_by("tranche_horaire__heure_debut", "-est_reportee", "-est_micro_compensation", "id")
         )
@@ -477,7 +479,7 @@ class VuePlanningHebdomadaire(APIView):
 
         sessions = list(
             SessionEtude.objects
-            .filter(plan=plan, date_prevue__range=(date_debut, date_fin))
+            .filter(plan=plan, date_prevue__range=(date_debut, date_fin), est_abandonnee=False)
             .select_related("chapitre__matiere", "tranche_horaire")
             .order_by("date_prevue", "tranche_horaire__heure_debut", "-est_reportee", "-est_micro_compensation", "id")
         )
@@ -653,6 +655,9 @@ class VueResumePlan(APIView):
         sessions_manquees   = sessions.filter(
             completee=False, date_prevue__lt=aujourd_hui
         ).count()
+        nb_en_retard        = sessions.filter(
+            completee=False, date_prevue__lt=aujourd_hui, est_abandonnee=False,
+        ).count()
 
         pourcentage_completion = round(
             sessions_completees / max(1, total_sessions) * 100, 1
@@ -684,6 +689,7 @@ class VueResumePlan(APIView):
                 "total_sessions":         total_sessions,
                 "sessions_completees":    sessions_completees,
                 "sessions_manquees":      sessions_manquees,
+                "nb_en_retard":           nb_en_retard,
                 "pourcentage_completion": pourcentage_completion,
                 "prochaine_session":      prochaine_session,
                 "prediction_reussite":    prediction_reussite,
@@ -1410,6 +1416,122 @@ class VueDecalerSession(APIView):
             'nouvelle_heure_debut':   debut,
             'nouvelle_heure_fin':     fin,
             'duree_decalage_minutes': duree,
+        }, status=status.HTTP_200_OK)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 11 : Séances en retard (manquées, non abandonnées)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueSeancesRetard(APIView):
+    """
+    GET /api/planning/retard/
+
+    Retourne les sessions dont la date est passée, non complétées et non abandonnées.
+    Pour chaque session : jours de retard, dette mémorielle (Ebbinghaus), urgence.
+
+    Urgence :
+      - normal   : dette < 20 %
+      - urgent   : 20 % ≤ dette < 40 %
+      - critique : dette ≥ 40 %
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        eleve = request.user
+        try:
+            plan = eleve.plan_etude
+        except PlanEtude.DoesNotExist:
+            return Response({'sessions_retard': [], 'nb_total': 0})
+
+        aujourd_hui    = date.today()
+        sessions_retard = list(
+            SessionEtude.objects
+            .filter(
+                plan=plan,
+                date_prevue__lt=aujourd_hui,
+                completee=False,
+                est_abandonnee=False,
+            )
+            .select_related('chapitre__matiere', 'tranche_horaire')
+            .order_by('date_prevue')
+        )
+
+        resultat = []
+        S = 14  # Stabilité mémorielle — baseline Ebbinghaus (jours)
+        for s in sessions_retard:
+            t     = (aujourd_hui - s.date_prevue).days
+            dette = min(0.80, round(1 - math.exp(-t / S), 3))
+
+            if dette >= 0.40:
+                urgence = 'critique'
+            elif dette >= 0.20:
+                urgence = 'urgent'
+            else:
+                urgence = 'normal'
+
+            data = _serialiser_session(s)
+            data['jours_retard']            = t
+            data['dette_retard']            = dette
+            data['dette_retard_pourcentage'] = round(dette * 100, 1)
+            data['urgence']                 = urgence
+            data['peut_rattraper']          = not s.est_reportee
+            resultat.append(data)
+
+        return Response({
+            'sessions_retard': resultat,
+            'nb_total':        len(resultat),
+        })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 12 : Abandonner une session manquée
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueAbandonnerSession(APIView):
+    """
+    POST /api/planning/sessions/{id}/abandonner/
+
+    Marque définitivement une session manquée comme abandonnée.
+    Elle disparaît des séances en retard et ne compte plus dans les stats.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        try:
+            session = (
+                SessionEtude.objects
+                .select_related('plan__eleve', 'chapitre__matiere')
+                .get(id=id, plan__eleve=request.user)
+            )
+        except SessionEtude.DoesNotExist:
+            return Response({'erreur': 'Session introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if session.completee:
+            return Response(
+                {'erreur': 'Impossible d\'abandonner une session déjà complétée.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if session.est_abandonnee:
+            return Response(
+                {'erreur': 'Cette session est déjà abandonnée.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        aujourd_hui = date.today()
+        if session.date_prevue >= aujourd_hui:
+            return Response(
+                {'erreur': 'Seules les sessions passées peuvent être abandonnées.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session.est_abandonnee = True
+        session.save(update_fields=['est_abandonnee'])
+
+        return Response({
+            'message': 'Séance abandonnée.',
+            'session': _serialiser_session(session),
         }, status=status.HTTP_200_OK)
 
 

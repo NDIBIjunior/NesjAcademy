@@ -32,6 +32,7 @@ abstract class Constantes {
   static const String urlPlanningSemaine   = '$_base/planning/semaine/';
   static const String urlResumePlan        = '$_base/planning/resume/';
   static const String urlSessions          = '$_base/planning/sessions/';
+  static const String urlSeancesRetard     = '$_base/planning/retard/';
   static const String urlPositionProgramme = '$_base/planning/position-programme/';
 
   // Imprévus — helpers pour construire les URLs d'action sur session

@@ -12,6 +12,7 @@ import '../../noyau/observateur_route.dart';
 import '../../noyau/theme.dart';
 import '../planning/ecran_decaler_session.dart';
 import '../planning/ecran_report_session.dart';
+import '../planning/ecran_seances_retard.dart';
 import '../seance/ecran_seance.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ class _DonneesAccueil {
   final Map<String, List<Map<String, dynamic>>> sessionsSemaine;
   final int  nbSessionsTotal;
   final int  nbSessionsCompletees;
+  final int  nbEnRetard;
   final bool aucunPlan;
 
   const _DonneesAccueil({
@@ -32,6 +34,7 @@ class _DonneesAccueil {
     required this.sessionsSemaine,
     required this.nbSessionsTotal,
     required this.nbSessionsCompletees,
+    required this.nbEnRetard,
     required this.aucunPlan,
   });
 
@@ -108,6 +111,7 @@ class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
         sessionsSemaine: {},
         nbSessionsTotal: 0,
         nbSessionsCompletees: 0,
+        nbEnRetard: 0,
         aucunPlan: true,
       );
     }
@@ -127,12 +131,14 @@ class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
     int nbSessionsTotal      = sessions.length;
     int nbSessionsCompletees =
         sessions.where((s) => s['completee'] == true).length;
+    int nbEnRetard           = 0;
 
     if (repResume.statusCode == 200) {
       final resume = jsonDecode(utf8.decode(repResume.bodyBytes))
           as Map<String, dynamic>;
       nbSessionsTotal      = resume['total_sessions']      as int? ?? nbSessionsTotal;
       nbSessionsCompletees = resume['sessions_completees'] as int? ?? nbSessionsCompletees;
+      nbEnRetard           = resume['nb_en_retard']        as int? ?? 0;
     }
 
     // Semaine : dict {"2025-05-26": [...], ...}
@@ -154,6 +160,7 @@ class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
       sessionsSemaine: sessionsSemaine,
       nbSessionsTotal: nbSessionsTotal,
       nbSessionsCompletees: nbSessionsCompletees,
+      nbEnRetard: nbEnRetard,
       aucunPlan: false,
     );
   }
@@ -298,6 +305,20 @@ class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
       children: [
+        // ── Bannière séances en retard ────────────────────────────────────
+        if (d.nbEnRetard > 0) ...[
+          _BanniereRetard(
+            nbRetard:   d.nbEnRetard,
+            onAppuyer:  () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => EcranSeancesRetard(onMisAJour: _rafraichir),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+
         // ── Prochaine séance (ou rattrapage prioritaire) ─────────────────
         _LabelSection(
           texte: (sessionActuelle?['est_micro_compensation'] as bool? ?? false)
@@ -471,6 +492,53 @@ class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
 // ─────────────────────────────────────────────────────────────────────────────
 // Widgets UI
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Bannière séances en retard ────────────────────────────────────────────────
+
+class _BanniereRetard extends StatelessWidget {
+  final int          nbRetard;
+  final VoidCallback onAppuyer;
+
+  const _BanniereRetard({required this.nbRetard, required this.onAppuyer});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onAppuyer,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color:        const Color(0xFFFFF7ED),
+          borderRadius: BorderRadius.circular(14),
+          border:       Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: Color(0xFFD97706), size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                nbRetard == 1
+                    ? '1 séance en retard — appuie pour rattraper'
+                    : '$nbRetard séances en retard — appuie pour rattraper',
+                style: const TextStyle(
+                  color:      Color(0xFF92400E),
+                  fontSize:   13,
+                  fontWeight: FontWeight.w600,
+                  height:     1.3,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded,
+                color: Color(0xFFD97706), size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 // ── Label de section ──────────────────────────────────────────────────────────
 
