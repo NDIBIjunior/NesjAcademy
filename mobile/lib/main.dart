@@ -6,6 +6,7 @@ import 'ecrans/auth/ecran_connexion.dart';
 import 'ecrans/auth/ecran_inscription.dart';
 import 'ecrans/auth/ecran_verification.dart';
 import 'ecrans/disponibilite/ecran_disponibilite.dart';
+import 'ecrans/planning/ecran_calibration_inscription.dart';
 import 'ecrans/planning/ecran_emploi_du_temps.dart';
 import 'ecrans/planning/ecran_objectifs.dart';
 import 'ecrans/planning/ecran_planning_jour.dart';
@@ -52,8 +53,9 @@ class NESJAcademyApp extends StatelessWidget {
           // ── Onboarding : objectifs → disponibilités → emploi du temps → génération
           Routes.objectifs:           (_) => const EcranObjectifs(),
           Routes.disponibilite:       (_) => const EcranDisponibilite(),
-          Routes.emploiDuTemps:       (_) => const EcranEmploiDuTemps(),
-          Routes.resultatsDiagnostic: (_) => const EcranResultatDiagnostic(),
+          Routes.emploiDuTemps:           (_) => const EcranEmploiDuTemps(),
+          Routes.calibrationInscription:  (_) => const EcranCalibrationInscription(),
+          Routes.resultatsDiagnostic:     (_) => const EcranResultatDiagnostic(),
 
           // ── Écrans individuels (accessibles via la navigation principale) ─
           Routes.planningJour:        (_) => const EcranPlanningJour(),

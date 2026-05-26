@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' show pi, cos, sin;
 
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../composants/guide_professeur.dart';
+import '../../composants/toast_app.dart';
+import '../../donnees/api/client_api.dart';
+import '../../noyau/constantes.dart';
 import '../../noyau/theme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +72,9 @@ class _EcranSeanceState extends State<EcranSeance> {
   Timer? _timer;
 
   late final String _matiere;
-  late final String _titre;
+  late String       _titre;       // mutable : peut changer après recalibrage
+  late int          _chapitreId;  // id du chapitre courant
+  late final int    _matiereId;
   late final String _type;
   late final bool   _estPilier;
   late final int    _dureeMinutes;
@@ -77,17 +83,44 @@ class _EcranSeanceState extends State<EcranSeance> {
   void initState() {
     super.initState();
     final chapitre = widget.session['chapitre'] as Map<String, dynamic>;
-    _matiere      = chapitre['matiere_nom']          as String;
-    _titre        = chapitre['titre']                as String;
-    _type         = widget.session['type_session']   as String;
-    _estPilier    = widget.session['est_pilier']     as bool? ?? false;
-    _dureeMinutes = widget.session['duree_minutes']  as int;
+    _matiere      = chapitre['matiere_nom']         as String;
+    _titre        = chapitre['titre']               as String;
+    _chapitreId   = chapitre['id']                  as int;
+    _matiereId    = chapitre['matiere_id']          as int;
+    _type         = widget.session['type_session']  as String;
+    _estPilier    = widget.session['est_pilier']    as bool? ?? false;
+    _dureeMinutes = widget.session['duree_minutes'] as int;
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _recalibrer() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _FeuilleRecalibrage(
+        matiereId:       _matiereId,
+        matiereNom:      _matiere,
+        chapitreActuelId: _chapitreId,
+        onChapitreSelectionne: (chapId, chapTitre) {
+          setState(() {
+            _chapitreId = chapId;
+            _titre      = chapTitre;
+          });
+          Navigator.pop(ctx);
+          ToastApp.afficher(
+            context,
+            message: 'Chapitre mis à jour — le planning s\'adaptera.',
+            type: ToastType.succes,
+          );
+        },
+      ),
+    );
   }
 
   void _allerAConcentration() => setState(() => _phase = _Phase.concentration);
@@ -132,15 +165,16 @@ class _EcranSeanceState extends State<EcranSeance> {
         ),
         child: switch (_phase) {
           _Phase.conseils => _PanneauConseils(
-              key:          const ValueKey('conseils'),
-              matiere:      _matiere,
-              titre:        _titre,
-              type:         _type,
-              estPilier:    _estPilier,
-              dureeMinutes: _dureeMinutes,
-              conseil:      _conseilPourMatiere(_matiere),
-              onPret:       _allerAConcentration,
-              onRetour:     () => Navigator.pop(context),
+              key:            const ValueKey('conseils'),
+              matiere:        _matiere,
+              titre:          _titre,
+              type:           _type,
+              estPilier:      _estPilier,
+              dureeMinutes:   _dureeMinutes,
+              conseil:        _conseilPourMatiere(_matiere),
+              onPret:         _allerAConcentration,
+              onRetour:       () => Navigator.pop(context),
+              onRecalibrer:   _type == 'decouverte' ? _recalibrer : null,
             ),
           _Phase.concentration => _PanneauConcentration(
               key:       const ValueKey('concentration'),
@@ -169,14 +203,16 @@ class _EcranSeanceState extends State<EcranSeance> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PanneauConseils extends StatelessWidget {
-  final String        matiere;
-  final String        titre;
-  final String        type;
-  final bool          estPilier;
-  final int           dureeMinutes;
-  final String        conseil;
-  final VoidCallback  onPret;
-  final VoidCallback  onRetour;
+  final String               matiere;
+  final String               titre;
+  final String               type;
+  final bool                 estPilier;
+  final int                  dureeMinutes;
+  final String               conseil;
+  final VoidCallback         onPret;
+  final VoidCallback         onRetour;
+  // null = pas de recalibrage (révisions)
+  final Future<void> Function()? onRecalibrer;
 
   const _PanneauConseils({
     super.key,
@@ -188,6 +224,7 @@ class _PanneauConseils extends StatelessWidget {
     required this.conseil,
     required this.onPret,
     required this.onRetour,
+    this.onRecalibrer,
   });
 
   static const _libellesType = {
@@ -337,6 +374,42 @@ class _PanneauConseils extends StatelessWidget {
             ),
 
             const Spacer(),
+
+            // ── Recalibrage (découverte uniquement) ───────────────────────
+            if (onRecalibrer != null) ...[
+              Center(
+                child: const Text(
+                  'Le prof a avancé plus rapidement ?',
+                  style: TextStyle(
+                    color:    CouleurApp.texteGris,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width:  double.infinity,
+                height: 50,
+                child: OutlinedButton.icon(
+                  onPressed: onRecalibrer,
+                  icon: const Icon(Icons.sync_rounded, size: 18),
+                  label: const Text('Recalibrer le chapitre'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: CouleurApp.bleuPrincipal,
+                    side: const BorderSide(color: CouleurApp.bleuPrincipal),
+                    minimumSize: const Size(0, 50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize:   15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
 
             // ── Bouton Je suis prêt ───────────────────────────────────────
             SizedBox(
@@ -811,6 +884,291 @@ class _AnneauProgressionPainter extends CustomPainter {
   bool shouldRepaint(_AnneauProgressionPainter old) =>
       old.progression    != progression ||
       old.lumiereOpacite != lumiereOpacite;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Feuille de recalibrage — bottom sheet pour changer le chapitre d'une séance
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FeuilleRecalibrage extends StatefulWidget {
+  final int    matiereId;
+  final String matiereNom;
+  final int    chapitreActuelId;
+  final void Function(int chapId, String chapTitre) onChapitreSelectionne;
+
+  const _FeuilleRecalibrage({
+    required this.matiereId,
+    required this.matiereNom,
+    required this.chapitreActuelId,
+    required this.onChapitreSelectionne,
+  });
+
+  @override
+  State<_FeuilleRecalibrage> createState() => _FeuilleRecalibrageState();
+}
+
+class _FeuilleRecalibrageState extends State<_FeuilleRecalibrage> {
+  bool   _chargement = true;
+  String? _erreur;
+  bool   _envoi      = false;
+
+  List<Map<String, dynamic>> _chapitres = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _charger();
+  }
+
+  Future<void> _charger() async {
+    try {
+      final rep = await ClientApi.get(Constantes.urlPositionProgramme);
+      if (rep.statusCode == 200) {
+        final liste = (jsonDecode(utf8.decode(rep.bodyBytes)) as List)
+            .cast<Map<String, dynamic>>();
+        final matiere = liste.firstWhere(
+          (m) => m['matiere_id'] == widget.matiereId,
+          orElse: () => <String, dynamic>{},
+        );
+        setState(() {
+          _chapitres  = matiere.isNotEmpty
+              ? (matiere['chapitres'] as List).cast<Map<String, dynamic>>()
+              : [];
+          _chargement = false;
+        });
+      } else {
+        setState(() { _erreur = 'Erreur de chargement.'; _chargement = false; });
+      }
+    } catch (_) {
+      setState(() {
+        _erreur     = 'Impossible de contacter le serveur.';
+        _chargement = false;
+      });
+    }
+  }
+
+  Future<void> _selectionner(int chapId, String chapTitre) async {
+    setState(() => _envoi = true);
+    try {
+      final rep = await ClientApi.post(
+        Constantes.urlPositionProgramme,
+        {'matiere_id': widget.matiereId, 'chapitre_id': chapId},
+        avecToken: true,
+      );
+      if (rep.statusCode >= 400) throw Exception();
+      widget.onChapitreSelectionne(chapId, chapTitre);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _envoi = false);
+      ToastApp.afficher(
+        context,
+        message: 'Erreur lors de la mise à jour. Réessaie.',
+        type: ToastType.erreur,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hauteurMax = MediaQuery.of(context).size.height * 0.75;
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: hauteurMax),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Poignée ────────────────────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.only(top: 12, bottom: 4),
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: CouleurApp.bordure,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // ── Titre ──────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+            child: Row(
+              children: [
+                const Icon(Icons.swap_horiz_rounded,
+                    color: CouleurApp.bleuPrincipal, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Changer de chapitre',
+                        style: TextStyle(
+                          color:      CouleurApp.bleuSombre,
+                          fontSize:   16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        widget.matiereNom,
+                        style: const TextStyle(
+                          color:   CouleurApp.texteGris,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color:        const Color(0xFFFEF3C7),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      size: 15, color: Color(0xFFD97706)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Le planning s\'adaptera automatiquement : les séances futures '
+                      'de cette matière démarreront au chapitre choisi.',
+                      style: TextStyle(
+                        color:    Color(0xFF92400E),
+                        fontSize: 12,
+                        height:   1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const Divider(height: 1, color: CouleurApp.bordure),
+
+          // ── Contenu ────────────────────────────────────────────────────
+          Flexible(
+            child: _chargement
+                ? const Padding(
+                    padding: EdgeInsets.all(40),
+                    child: CircularProgressIndicator(
+                        color: CouleurApp.bleuPrincipal),
+                  )
+                : _erreur != null
+                    ? Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.wifi_off_rounded,
+                                size: 36, color: CouleurApp.texteGris),
+                            const SizedBox(height: 12),
+                            Text(_erreur!,
+                                style: const TextStyle(
+                                    color: CouleurApp.texteGris)),
+                            const SizedBox(height: 12),
+                            TextButton(
+                                onPressed: _charger,
+                                child: const Text('Réessayer')),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: _chapitres.length,
+                        itemBuilder: (_, i) {
+                          final chap   = _chapitres[i];
+                          final cid    = chap['id']    as int;
+                          final titre  = chap['titre'] as String;
+                          final ordre  = chap['ordre'] as int;
+                          final estActuel = cid == widget.chapitreActuelId;
+
+                          return InkWell(
+                            onTap: _envoi ? null : () => _selectionner(cid, titre),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 13),
+                              child: Row(
+                                children: [
+                                  // Numéro de chapitre
+                                  Container(
+                                    width: 32, height: 32,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: estActuel
+                                          ? CouleurApp.bleuPrincipal
+                                          : CouleurApp.fondClair,
+                                      border: Border.all(
+                                        color: estActuel
+                                            ? CouleurApp.bleuPrincipal
+                                            : CouleurApp.bordure,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '$ordre',
+                                        style: TextStyle(
+                                          color: estActuel
+                                              ? Colors.white
+                                              : CouleurApp.texteGris,
+                                          fontSize:   12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Text(
+                                      titre,
+                                      style: TextStyle(
+                                        color: estActuel
+                                            ? CouleurApp.bleuPrincipal
+                                            : CouleurApp.bleuSombre,
+                                        fontWeight: estActuel
+                                            ? FontWeight.w600
+                                            : FontWeight.normal,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                  if (estActuel && !_envoi)
+                                    const Icon(Icons.check_rounded,
+                                        color: CouleurApp.bleuPrincipal,
+                                        size: 18),
+                                  if (_envoi && estActuel)
+                                    const SizedBox(
+                                      width: 18, height: 18,
+                                      child: CircularProgressIndicator(
+                                          color: CouleurApp.bleuPrincipal,
+                                          strokeWidth: 2.5),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+
+          // Espace sous la liste pour les appareils avec barre de navigation
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
+        ],
+      ),
+    );
+  }
 }
 
 // ── Chip d'état réutilisable ──────────────────────────────────────────────────

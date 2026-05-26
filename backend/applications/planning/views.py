@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .algorithme import GenerateurPlan, RevisionEspacee
+from .algorithme import GenerateurPlan, RevisionEspacee, recalibrer_sessions_matiere
 from .conseiller import ConseillerDisponibilite
 from .models import (
     Chapitre,
@@ -1016,6 +1016,10 @@ class VuePositionProgramme(APIView):
                 # Ne pas rétrograder un chapitre déjà maîtrisé
                 prog.statut = statut_cible
                 prog.save(update_fields=['statut'])
+
+        # Recalibrer les sessions futures de cette matière uniquement.
+        # Les créneaux, dates et autres matières restent intacts.
+        recalibrer_sessions_matiere(eleve, matiere, chapitre)
 
         return Response(
             {"message": f"Position mise à jour : {chapitre.titre}"},

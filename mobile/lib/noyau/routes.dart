@@ -25,6 +25,9 @@ abstract class Routes {
   // Emploi du temps lycée (cours par jour → révisions immédiates)
   static const String emploiDuTemps        = '/emploi-du-temps';
 
+  // Calibration initiale (onboarding) — où en sont les profs en classe ?
+  static const String calibrationInscription = '/calibration-inscription';
+
   // Analytique
   static const String analytique        = '/analytique';
 
