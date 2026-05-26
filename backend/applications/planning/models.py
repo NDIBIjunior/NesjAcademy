@@ -205,6 +205,10 @@ class SessionEtude(models.Model):
         default=False,
         help_text="Session bonus suggérée si l'élève a du temps libre — non obligatoire",
     )
+    est_pilier = models.BooleanField(
+        default=False,
+        help_text="Session fixe hebdomadaire pour une matière à fort coefficient (pilier)",
+    )
     tranche_horaire = models.ForeignKey(
         'TrancheHoraire',
         on_delete=models.SET_NULL,

@@ -872,17 +872,20 @@ class _CarteSession extends StatelessWidget {
     final type      = session['type_session'] as String;
     final duree     = session['duree_minutes'] as int;
     final completee         = session['completee']          as bool;
+    final estPilier         = session['est_pilier']  as bool? ?? false;
     final tranche           = session['tranche']             as Map<String, dynamic>?;
     final heureDebutSession = session['heure_debut_session'] as String?;
     final heureFinSession   = session['heure_fin_session']   as String?;
     final libelle           = _libellesType[type] ?? type;
     final estRevision       = type.startsWith('revision');
 
-    final Color couleurAccent = type == 'revision_immediate'
-        ? const Color(0xFFEA580C)
-        : estRevision
-            ? CouleurApp.jauneAccent
-            : CouleurApp.bleuPrincipal;
+    final Color couleurAccent = estPilier
+        ? const Color(0xFFB45309)   // ambre doré — signature visuelle des piliers
+        : type == 'revision_immediate'
+            ? const Color(0xFFEA580C)
+            : estRevision
+                ? CouleurApp.jauneAccent
+                : CouleurApp.bleuPrincipal;
 
     // Durée formatée
     final h = duree ~/ 60;
@@ -928,11 +931,13 @@ class _CarteSession extends StatelessWidget {
                 child: Icon(
                   completee
                       ? Icons.check_circle_rounded
-                      : (type == 'revision_immediate'
-                          ? Icons.flash_on_rounded
-                          : estRevision
-                              ? Icons.replay_rounded
-                              : Icons.school_rounded),
+                      : estPilier
+                          ? Icons.star_rounded
+                          : (type == 'revision_immediate'
+                              ? Icons.flash_on_rounded
+                              : estRevision
+                                  ? Icons.replay_rounded
+                                  : Icons.school_rounded),
                   color: completee ? CouleurApp.texteGris : couleurAccent,
                   size: 20,
                 ),
@@ -976,6 +981,35 @@ class _CarteSession extends StatelessWidget {
                               ),
                             ),
                           ),
+                          // Badge Pilier (affiché uniquement pour les sessions piliers)
+                          if (estPilier) ...[
+                            const SizedBox(width: 5),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: const Color(0xFFB45309).withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.star_rounded, size: 9, color: Color(0xFFB45309)),
+                                  SizedBox(width: 2),
+                                  Text(
+                                    'Pilier',
+                                    style: TextStyle(
+                                      color: Color(0xFFB45309),
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 3),
@@ -1000,10 +1034,15 @@ class _CarteSession extends StatelessWidget {
                       Row(
                         children: [
                           Text(
-                            libelle,
-                            style: const TextStyle(
-                              color: CouleurApp.texteGris,
+                            estPilier ? 'Session dédiée' : libelle,
+                            style: TextStyle(
+                              color: estPilier
+                                  ? const Color(0xFFB45309)
+                                  : CouleurApp.texteGris,
                               fontSize: 11,
+                              fontWeight: estPilier
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
                             ),
                           ),
                           if (heureDebutSession != null) ...[
@@ -1142,6 +1181,7 @@ class _FeuilleDetailSession extends StatelessWidget {
     final heureDebutSession = session['heure_debut_session'] as String?;
     final heureFinSession   = session['heure_fin_session']   as String?;
     final necessExo         = chapitre['necessite_exercices'] == true;
+    final estPilier         = session['est_pilier'] as bool? ?? false;
 
     final info = _infosType[type] ?? (
       icone: Icons.help_outline_rounded,
@@ -1157,11 +1197,13 @@ class _FeuilleDetailSession extends StatelessWidget {
         : '${m} minutes';
 
     final estRevision = type.startsWith('revision');
-    final Color couleurAccent = type == 'revision_immediate'
-        ? const Color(0xFFEA580C)
-        : estRevision
-            ? CouleurApp.jauneAccent
-            : CouleurApp.bleuPrincipal;
+    final Color couleurAccent = estPilier
+        ? const Color(0xFFB45309)
+        : type == 'revision_immediate'
+            ? const Color(0xFFEA580C)
+            : estRevision
+                ? CouleurApp.jauneAccent
+                : CouleurApp.bleuPrincipal;
 
     return Container(
       decoration: const BoxDecoration(
@@ -1186,6 +1228,39 @@ class _FeuilleDetailSession extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
+
+            // ── Bannière pilier (affichée uniquement pour les sessions dédiées) ──
+            if (estPilier) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFFB45309).withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.star_rounded, size: 16, color: Color(0xFFB45309)),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Session dédiée — créneau fixe chaque semaine pour cette matière à fort coefficient.',
+                        style: TextStyle(
+                          color: Color(0xFFB45309),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
 
             // ── En-tête : date + heure ─────────────────────────────────────
             Container(

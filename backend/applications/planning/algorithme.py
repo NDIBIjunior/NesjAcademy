@@ -105,6 +105,13 @@ DUREE_REVISION_ESPACEE = 30
 # Durée minimale en dessous de laquelle on ne crée pas de session (en minutes).
 DUREE_MINIMALE_SESSION = 20
 
+# ── Sessions piliers ──────────────────────────────────────────────────────────
+# Les N matieres au poids le plus elevé (coeff × difficulte) reçoivent
+# une session FIXE exclusive chaque semaine, au meme jour.
+# Cela crée une routine forte pour les matieres qui comptent le plus au Bac.
+NB_MATIERES_PILIERS  = 3   # nombre de matieres qui obtiennent une session fixe
+DUREE_SESSION_PILIER = 120  # duree (min) de la session pilier exclusive (2h min, non négociable)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tables de correspondance jour ↔ weekday Python
@@ -733,6 +740,115 @@ class SessionConstructeur:
             wd = _JOUR_WEEKDAY[cours.jour]
             cours_par_weekday.setdefault(wd, set()).add(cours.matiere_id)
 
+        # ── Étape 1 : identifier les matières piliers ────────────────────────────
+        #
+        # On trie tous les objectifs de l'élève par poids décroissant.
+        # Poids = niveau_difficulte × coefficient_minesec (coefficients officiels MINESEC).
+        # Ex Tle C : Maths diff=3 coeff=9 → poids=27. Anglais diff=1 coeff=2 → poids=2.
+        #
+        # Les NB_MATIERES_PILIERS matières les plus lourdes deviennent des "piliers" :
+        # elles auront une session fixe exclusive chaque semaine (étape 2).
+        #
+        objectifs_tries = sorted(
+            ObjectifMatiere.objects.filter(eleve=eleve).select_related('matiere'),
+            key=lambda o: o.niveau_difficulte * o.matiere.coefficient_minesec,
+            reverse=True,
+        )
+        nb_piliers = min(NB_MATIERES_PILIERS, len(objectifs_tries))
+        matieres_piliers: set = {o.matiere_id for o in objectifs_tries[:nb_piliers]}
+
+        logger.info(
+            "Piliers identifies (%d) : %s",
+            nb_piliers,
+            [o.matiere.nom for o in objectifs_tries[:nb_piliers]],
+        )
+
+        # ── Matières à Haute Charge Cognitive (HCC) ───────────────────────────
+        #
+        # Parmi les piliers, celles qui nécessitent des exercices (maths,
+        # physique-chimie...) forment un groupe "HCC".
+        # Règle absolue : deux matières HCC ne peuvent jamais être placées
+        # le MÊME JOUR — chacune nécessite toute la capacité de réflexion
+        # de l'élève pour être efficace.
+        #
+        matieres_hcc: set = {
+            o.matiere_id
+            for o in objectifs_tries[:nb_piliers]
+            if o.matiere.necessite_exercices
+        }
+        logger.info(
+            "Matieres HCC (jamais le meme jour) : %s",
+            [o.matiere.nom for o in objectifs_tries[:nb_piliers] if o.matiere.necessite_exercices],
+        )
+
+        # ── Étape 2 : choisir le meilleur jour d'ancrage pour chaque pilier ──
+        #
+        # Pour chaque matiere pilier (traitées dans l'ordre du poids, donc
+        # la plus importante en premier), on cherche le meilleur jour disponible.
+        #
+        # Règles de priorité (dans l'ordre) :
+        #   1. Jour où la matiere est au programme scolaire (boussole lycee)
+        #      ET le jour a assez de temps (>= DUREE_SESSION_PILIER)
+        #      ET le jour n'est pas déjà pris par un autre pilier.
+        #   2. N'importe quel jour avec assez de temps, pas encore pris.
+        #   3. Si aucun jour unique disponible : on partage le meilleur jour
+        #      (cas rare avec beaucoup de piliers et peu de jours de travail).
+        #
+        # Résultat : jour_par_pilier = {matiere_id: weekday (0=lundi … 6=dimanche)}
+        #
+        temps_par_wd = {
+            wd: sum(duree for duree, _ in plages)
+            for wd, plages in plages_par_wd.items()
+        }
+
+        jour_par_pilier: dict = {}   # {matiere_id: weekday}
+        jours_pris      = set()      # un jour = un seul pilier (si possible)
+
+        for obj in objectifs_tries[:nb_piliers]:
+            mat_id = obj.matiere_id
+
+            # Jours avec ce cours au lycée + temps suffisant + pas encore pris
+            jours_lycee = {
+                wd for wd, mats in cours_par_weekday.items()
+                if mat_id in mats
+                and temps_par_wd.get(wd, 0) >= DUREE_SESSION_PILIER
+                and wd not in jours_pris
+            }
+
+            if jours_lycee:
+                # Parmi ces jours, on prend celui qui a le plus de temps libre
+                meilleur = max(jours_lycee, key=lambda w: temps_par_wd.get(w, 0))
+            else:
+                # Fallback 1 : n'importe quel jour disponible non encore pris
+                jours_libres = {
+                    wd for wd, total in temps_par_wd.items()
+                    if total >= DUREE_SESSION_PILIER and wd not in jours_pris
+                }
+                if jours_libres:
+                    meilleur = max(jours_libres, key=lambda w: temps_par_wd.get(w, 0))
+                else:
+                    # Fallback 2 (rare) : on partage le jour le plus chargé
+                    jours_valides = {
+                        wd for wd, total in temps_par_wd.items()
+                        if total >= DUREE_SESSION_PILIER
+                    }
+                    if not jours_valides:
+                        logger.warning(
+                            "Pilier %s : aucun jour avec %d min disponibles, ignore.",
+                            obj.matiere.nom, DUREE_SESSION_PILIER,
+                        )
+                        continue
+                    meilleur = max(jours_valides, key=lambda w: temps_par_wd.get(w, 0))
+
+            jour_par_pilier[mat_id] = meilleur
+            jours_pris.add(meilleur)
+            logger.info(
+                "  Pilier %-15s -> %s (%d min dispo ce jour)",
+                obj.matiere.nom,
+                _WEEKDAY_JOUR[meilleur],
+                temps_par_wd.get(meilleur, 0),
+            )
+
         # ── État initial de la planification ──────────────────────────────────
         file_sessions        = deque(sessions_non_datees)  # File entrelacée des sessions à placer
         revisions_en_attente: dict = {}                    # {date: [session_dict, ...]}
@@ -758,6 +874,16 @@ class SessionConstructeur:
             matieres_du_jour   = set()    # Matières déjà étudiées aujourd'hui (max 2)
             revisions_a_placer = list(revisions_dues)
             cours_du_jour_set  = cours_par_weekday.get(jour_courant.weekday(), set())
+
+            # Piliers dont c'est le jour d'ancrage aujourd'hui
+            piliers_du_jour = {
+                mat_id for mat_id, wd in jour_par_pilier.items()
+                if wd == jour_courant.weekday()
+            }
+            # Piliers déjà placés aujourd'hui (évite la duplication si 2+ tranches)
+            piliers_places = set()
+            # HCC déjà placées aujourd'hui — une seule par jour maximum
+            hcc_du_jour    = set()
 
             # ── Boussole lycee + alternance : choisir la premiere session ────
             #
@@ -797,6 +923,65 @@ class SessionConstructeur:
             for (duree_tranche, tranche_obj) in plages_du_jour:
                 minutes_restantes = duree_tranche
                 buffer_tranche    = []  # sessions de cette tranche, regroupées en fin de boucle
+
+                # ═══════════════════════════════════════════════════════════════
+                # PRIORITÉ 0 — Session pilier (matière à fort coeff, jour fixe)
+                # ═══════════════════════════════════════════════════════════════
+                #
+                # Si aujourd'hui est le jour d'ancrage d'une matière pilier,
+                # on place sa session exclusive AVANT tout le reste.
+                # Durée : DUREE_SESSION_PILIER (90 min) ou le temps restant.
+                #
+                # Règles :
+                #   - Un seul pilier par jour est autorisé (jours_pris à l'étape 2).
+                #   - Si la tranche est trop courte, on reporte à la tranche suivante.
+                #   - Le pilier compte comme l'une des 2 matières du jour.
+                #   - Les révisions espacées du pilier sont programmées normalement.
+                #
+                for mat_id in list(piliers_du_jour):
+                    if mat_id in piliers_places:
+                        continue  # déjà placé dans une tranche précédente
+                    if minutes_restantes < DUREE_MINIMALE_SESSION:
+                        break     # tranche trop courte, on tentera la suivante
+
+                    # Règle HCC : Maths et Physique-Chimie ne peuvent jamais
+                    # être dans la même journée. Si une autre matière HCC a déjà
+                    # été placée aujourd'hui, on reporte ce pilier au lendemain.
+                    if mat_id in matieres_hcc and hcc_du_jour and mat_id not in hcc_du_jour:
+                        logger.debug(
+                            "  [%s] HCC : pilier %s reporte (conflit avec %s)",
+                            jour_courant, mat_id, hcc_du_jour,
+                        )
+                        piliers_places.add(mat_id)
+                        continue
+
+                    sess_pilier = _retirer_session_matiere(file_sessions, mat_id)
+                    if sess_pilier is None:
+                        piliers_places.add(mat_id)  # budget épuisé pour ce pilier
+                        continue
+
+                    duree_eff = min(DUREE_SESSION_PILIER, minutes_restantes)
+                    buffer_tranche.append({
+                        **sess_pilier,
+                        'date':            jour_courant,
+                        'duree_minutes':   duree_eff,
+                        'tranche_horaire': tranche_obj,
+                        'est_pilier':      True,
+                        'est_optionnelle': False,
+                    })
+                    matieres_du_jour.add(mat_id)
+                    minutes_restantes -= duree_eff
+                    piliers_places.add(mat_id)
+                    if mat_id in matieres_hcc:
+                        hcc_du_jour.add(mat_id)
+
+                    for rev in reviseur.creer_revisions(sess_pilier, jour_courant, date_fin):
+                        revisions_en_attente.setdefault(rev['date'], []).append(rev)
+
+                    logger.debug(
+                        "  [%s] Pilier %s : %d min",
+                        jour_courant, mat_id, duree_eff,
+                    )
 
                 # ═══════════════════════════════════════════════════════════════
                 # PRIORITÉ 1 — Révisions espacées dues aujourd'hui (J+1/J+3/J+7/J+14)
@@ -869,7 +1054,10 @@ class SessionConstructeur:
                 # ═══════════════════════════════════════════════════════════════
                 #
                 # On consomme la file round-robin pour remplir le temps restant.
-                # Règles :
+                # Règles (par ordre de priorité) :
+                #   - Protection pilier : si une matière pilier a déjà eu sa session
+                #     exclusive aujourd'hui, le round-robin ne la reprend PAS.
+                #     Le temps restant est réservé à une matière dynamique différente.
                 #   - Max 2 matières différentes par jour.
                 #     Si la session en tête est une 3ème matière, on tourne la file
                 #     pour trouver une session d'une matière déjà commencée.
@@ -882,6 +1070,24 @@ class SessionConstructeur:
 
                     s          = file_sessions[0]
                     matiere_id = s['matiere_id']
+
+                    # Protection pilier : ne pas re-placer la matière pilier
+                    # après sa session exclusive sur ce jour d'ancrage.
+                    if matiere_id in piliers_places:
+                        nb_tentatives += 1
+                        if nb_tentatives >= len(file_sessions):
+                            break
+                        file_sessions.rotate(-1)
+                        continue
+
+                    # Règle HCC : ne jamais planifier Maths et Physique-Chimie
+                    # le même jour (deux matières à haute charge cognitive).
+                    if matiere_id in matieres_hcc and hcc_du_jour and matiere_id not in hcc_du_jour:
+                        nb_tentatives += 1
+                        if nb_tentatives >= len(file_sessions):
+                            break
+                        file_sessions.rotate(-1)
+                        continue
 
                     # Contrainte : max 2 matières différentes par jour
                     if len(matieres_du_jour) >= 2 and matiere_id not in matieres_du_jour:
@@ -910,6 +1116,8 @@ class SessionConstructeur:
                     matieres_du_jour.add(matiere_id)
                     minutes_restantes -= duree_effective
                     nb_tentatives = 0  # Reset : on a bien placé une session
+                    if matiere_id in matieres_hcc:
+                        hcc_du_jour.add(matiere_id)
 
                     logger.debug(
                         "  [%s] Découverte %s : %d min (tranche %s)",
@@ -1094,6 +1302,7 @@ class GenerateurPlan:
                 type_session=s['type_session'],
                 tranche_horaire=s.get('tranche_horaire'),
                 est_optionnelle=s.get('est_optionnelle', False),
+                est_pilier=s.get('est_pilier', False),
             )
             for s in sessions_datees
         ])

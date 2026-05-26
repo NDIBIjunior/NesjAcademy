@@ -85,6 +85,7 @@ def _serialiser_session(session, heure_debut_session=None, heure_fin_session=Non
         "type_session":        session.type_session,
         "completee":           session.completee,
         "est_optionnelle":     session.est_optionnelle,
+        "est_pilier":          session.est_pilier,
         "date_prevue":         session.date_prevue.isoformat(),
         "tranche":             tranche,
         "heure_debut_session": heure_debut_session,
