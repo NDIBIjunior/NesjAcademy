@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
 import '../../donnees/local/stockage_local.dart';
 import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
+import '../../noyau/observateur_route.dart';
 import '../../noyau/theme.dart';
 import '../seance/ecran_seance.dart';
 
@@ -49,7 +51,7 @@ class EcranAccueil extends StatefulWidget {
   State<EcranAccueil> createState() => _EcranAccueilState();
 }
 
-class _EcranAccueilState extends State<EcranAccueil> {
+class _EcranAccueilState extends State<EcranAccueil> with RouteAware {
   late Future<_DonneesAccueil> _futureData;
   bool _generationEnCours = false;
 
@@ -58,6 +60,24 @@ class _EcranAccueilState extends State<EcranAccueil> {
     super.initState();
     _futureData = _chargerDonnees();
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null) observateurRoute.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    observateurRoute.unsubscribe(this);
+    super.dispose();
+  }
+
+  // Appelé quand une route empilée dessus est dépilée (ex : EcranSeance pop).
+  // Même effet que le changement d'onglet : rechargement avec shimmer.
+  @override
+  void didPopNext() => _rafraichir();
 
   Future<_DonneesAccueil> _chargerDonnees() async {
     final utilisateur = await StockageLocal.lireUtilisateur();
@@ -158,10 +178,11 @@ class _EcranAccueilState extends State<EcranAccueil> {
       if (mounted) setState(() => _futureData = _chargerDonnees());
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(e.toString().replaceFirst('Exception: ', '')),
-        backgroundColor: CouleurApp.erreur,
-      ));
+      ToastApp.afficher(
+        context,
+        message: e.toString().replaceFirst('Exception: ', ''),
+        type: ToastType.erreur,
+      );
     } finally {
       if (mounted) setState(() => _generationEnCours = false);
     }
@@ -279,7 +300,10 @@ class _EcranAccueilState extends State<EcranAccueil> {
         const _LabelSection(texte: 'Prochaine séance'),
         const SizedBox(height: 12),
         sessionActuelle != null
-            ? _CarteProchainSeance(session: sessionActuelle)
+            ? _CarteProchainSeance(
+                session:           sessionActuelle,
+                onSessionTerminee: _rafraichir,
+              )
             : const _CartePasDeSessions(),
         const SizedBox(height: 28),
 
@@ -466,7 +490,12 @@ class _LabelSection extends StatelessWidget {
 
 class _CarteProchainSeance extends StatefulWidget {
   final Map<String, dynamic> session;
-  const _CarteProchainSeance({required this.session});
+  final VoidCallback          onSessionTerminee;
+
+  const _CarteProchainSeance({
+    required this.session,
+    required this.onSessionTerminee,
+  });
 
   @override
   State<_CarteProchainSeance> createState() => _CarteProchainSeanceState();
@@ -481,12 +510,14 @@ class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
     setState(() => _pressed = false);
     await Future.delayed(const Duration(milliseconds: 60));
     if (!mounted) return;
-    Navigator.push(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => EcranSeance(session: widget.session),
       ),
     );
+    // Le RouteObserver dans _EcranAccueilState.didPopNext() déclenche
+    // automatiquement _rafraichir() dès que cette route redevient visible.
   }
 
   static const _libellesType = {
@@ -989,6 +1020,7 @@ class _VueHebdomadaire extends StatelessWidget {
                           matiere:    matiere,
                           couleur:    couleur,
                           estPilier:  estPilier,
+                          completee:  s['completee'] as bool? ?? false,
                           heureDebut: debutStr != null ? _fmtHeure(debutStr) : null,
                           heureFin:   finStr   != null ? _fmtHeure(finStr)   : null,
                         );
@@ -1010,6 +1042,7 @@ class _BlocSessionSemaine extends StatelessWidget {
   final String  matiere;
   final Color   couleur;
   final bool    estPilier;
+  final bool    completee;
   final String? heureDebut;
   final String? heureFin;
 
@@ -1017,21 +1050,28 @@ class _BlocSessionSemaine extends StatelessWidget {
     required this.matiere,
     required this.couleur,
     required this.estPilier,
+    required this.completee,
     this.heureDebut,
     this.heureFin,
   });
 
   @override
   Widget build(BuildContext context) {
+    final couleurEffective = completee ? CouleurApp.texteGris : couleur;
+
     return Container(
       margin:  const EdgeInsets.only(bottom: 5),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
       decoration: BoxDecoration(
-        color:        couleur.withValues(alpha: 0.10),
+        color:        completee
+            ? CouleurApp.fondClair
+            : couleur.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: couleur.withValues(alpha: estPilier ? 0.55 : 0.25),
-          width: estPilier ? 1.5 : 1.0,
+          color: completee
+              ? CouleurApp.bordure
+              : couleur.withValues(alpha: estPilier ? 0.55 : 0.25),
+          width: estPilier && !completee ? 1.5 : 1.0,
         ),
       ),
       child: Column(
@@ -1041,7 +1081,7 @@ class _BlocSessionSemaine extends StatelessWidget {
             Text(
               heureFin != null ? '$heureDebut → $heureFin' : heureDebut!,
               style: TextStyle(
-                color:      couleur.withValues(alpha: 0.75),
+                color:      couleurEffective.withValues(alpha: 0.60),
                 fontSize:   9,
                 fontWeight: FontWeight.w600,
               ),
@@ -1053,7 +1093,8 @@ class _BlocSessionSemaine extends StatelessWidget {
                 child: Text(
                   matiere,
                   style: TextStyle(
-                    color:      couleur,
+                    color:      couleurEffective.withValues(
+                        alpha: completee ? 0.55 : 1.0),
                     fontSize:   10,
                     fontWeight: FontWeight.w700,
                     height:     1.2,
@@ -1062,7 +1103,10 @@ class _BlocSessionSemaine extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (estPilier)
+              if (completee)
+                const Icon(Icons.check_circle_rounded,
+                    size: 10, color: Color(0xFF059669))
+              else if (estPilier)
                 Padding(
                   padding: const EdgeInsets.only(left: 2),
                   child: Icon(Icons.star_rounded, size: 10, color: couleur),

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show pi, cos, sin;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -58,19 +59,24 @@ enum _Phase { conseils, concentration, chrono }
 
 class EcranSeance extends StatefulWidget {
   final Map<String, dynamic> session;
-  const EcranSeance({super.key, required this.session});
+  final VoidCallback?         onTermine;
+
+  const EcranSeance({super.key, required this.session, this.onTermine});
 
   @override
   State<EcranSeance> createState() => _EcranSeanceState();
 }
 
 class _EcranSeanceState extends State<EcranSeance> {
-  _Phase _phase              = _Phase.conseils;
-  bool   _concentrationActive = false;
-  bool   _enPause             = false;
-  int    _secondes            = 0;
-  Timer? _timer;
+  _Phase       _phase              = _Phase.conseils;
+  bool         _concentrationActive = false;
+  bool         _enPause             = false;
+  bool         _enTerminaison       = false;
+  int          _secondes            = 0;
+  Timer?       _timer;
+  AudioPlayer? _audioPlayer;
 
+  late final int    _sessionId;
   late final String _matiere;
   late String       _titre;       // mutable : peut changer après recalibrage
   late int          _chapitreId;  // id du chapitre courant
@@ -83,6 +89,7 @@ class _EcranSeanceState extends State<EcranSeance> {
   void initState() {
     super.initState();
     final chapitre = widget.session['chapitre'] as Map<String, dynamic>;
+    _sessionId    = widget.session['id']            as int;
     _matiere      = chapitre['matiere_nom']         as String;
     _titre        = chapitre['titre']               as String;
     _chapitreId   = chapitre['id']                  as int;
@@ -90,12 +97,29 @@ class _EcranSeanceState extends State<EcranSeance> {
     _type         = widget.session['type_session']  as String;
     _estPilier    = widget.session['est_pilier']    as bool? ?? false;
     _dureeMinutes = widget.session['duree_minutes'] as int;
+    _prechargerSon();
+  }
+
+  // Pré-charge le fichier audio dès l'ouverture de la séance
+  Future<void> _prechargerSon() async {
+    _audioPlayer = AudioPlayer();
+    try {
+      await _audioPlayer!.setSource(AssetSource('sons/felicitations.mp3'));
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _audioPlayer?.dispose();
     super.dispose();
+  }
+
+  void _jouerSon() {
+    // Reprend depuis le début le player déjà pré-chargé par _prechargerSon()
+    _audioPlayer?.seek(Duration.zero).then((_) {
+      _audioPlayer?.resume();
+    }).catchError((_) {});
   }
 
   Future<void> _recalibrer() async {
@@ -142,9 +166,50 @@ class _EcranSeanceState extends State<EcranSeance> {
 
   void _togglePause() => setState(() => _enPause = !_enPause);
 
-  void _terminer() {
+  Future<void> _terminer() async {
     _timer?.cancel();
-    Navigator.pop(context);
+    setState(() => _enTerminaison = true);
+    try {
+      final rep = await ClientApi.post(
+        '${Constantes.urlSessions}$_sessionId/completer/',
+        {},
+        avecToken: true,
+      );
+      if (rep.statusCode >= 400) throw Exception();
+
+      if (!mounted) return;
+
+      // Étape 1 — dialogue résumé : temps passé
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _DialogFelicitations(secondes: _secondes),
+      );
+
+      if (!mounted) return;
+
+      // Étape 2 — son + plein écran feux d'artifice
+      _jouerSon();
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => const _EcranFelicitations(),
+        ),
+      );
+
+      // Quand _EcranFelicitations se ferme, on dépile EcranSeance.
+      // _demarrer() sur l'accueil reprend alors la main et appelle _rafraichir().
+      if (mounted) Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _enTerminaison = false);
+      ToastApp.afficher(
+        context,
+        message: 'Erreur lors de la validation. Réessaie.',
+        type: ToastType.erreur,
+      );
+    }
   }
 
   @override
@@ -189,6 +254,7 @@ class _EcranSeanceState extends State<EcranSeance> {
               secondes:           _secondes,
               enPause:            _enPause,
               concentrationActive: _concentrationActive,
+              enTerminaison:      _enTerminaison,
               onTogglePause:      _togglePause,
               onTerminer:         _terminer,
             ),
@@ -571,6 +637,7 @@ class _PanneauChrono extends StatefulWidget {
   final int    secondes;
   final bool   enPause;
   final bool   concentrationActive;
+  final bool   enTerminaison;
   final VoidCallback onTogglePause;
   final VoidCallback onTerminer;
 
@@ -582,6 +649,7 @@ class _PanneauChrono extends StatefulWidget {
     required this.secondes,
     required this.enPause,
     required this.concentrationActive,
+    required this.enTerminaison,
     required this.onTogglePause,
     required this.onTerminer,
   });
@@ -775,10 +843,16 @@ class _PanneauChronoState extends State<_PanneauChrono>
                   child: SizedBox(
                     height: 50,
                     child: ElevatedButton.icon(
-                      onPressed: widget.onTerminer,
-                      icon: const Icon(
-                          Icons.check_circle_outline_rounded, size: 20),
-                      label: const Text('Terminer'),
+                      onPressed: widget.enTerminaison ? null : widget.onTerminer,
+                      icon: widget.enTerminaison
+                          ? const SizedBox(
+                              width: 18, height: 18,
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 2.5))
+                          : const Icon(
+                              Icons.check_circle_outline_rounded, size: 20),
+                      label: Text(
+                          widget.enTerminaison ? 'Enregistrement…' : 'Terminer'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: CouleurApp.bleuPrincipal,
                         foregroundColor: Colors.white,
@@ -1169,6 +1243,308 @@ class _FeuilleRecalibrageState extends State<_FeuilleRecalibrage> {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dialogue de félicitations — affiché après la validation d'une séance
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DialogFelicitations extends StatelessWidget {
+  final int secondes;
+  const _DialogFelicitations({required this.secondes});
+
+  String _formatDuree(int sec) {
+    if (sec < 60) return '$sec seconde${sec > 1 ? "s" : ""}';
+    final m = sec ~/ 60;
+    final s = sec % 60;
+    if (s == 0) return '$m minute${m > 1 ? "s" : ""}';
+    return '${m}min ${s}s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+        decoration: BoxDecoration(
+          color:        Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color:      Colors.black.withValues(alpha: 0.10),
+              blurRadius: 32,
+              offset:     const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Icône succès
+            Container(
+              width:  80,
+              height: 80,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xFFD1FAE5),
+              ),
+              child: const Icon(
+                Icons.check_circle_rounded,
+                size:  48,
+                color: Color(0xFF059669),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            const Text(
+              'Séance terminée !',
+              style: TextStyle(
+                color:      CouleurApp.bleuSombre,
+                fontSize:   22,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+
+            RichText(
+              textAlign: TextAlign.center,
+              text: TextSpan(
+                style: const TextStyle(
+                  color:    CouleurApp.texteGris,
+                  fontSize: 14,
+                  height:   1.5,
+                ),
+                children: [
+                  const TextSpan(text: 'Tu as travaillé pendant\n'),
+                  TextSpan(
+                    text: _formatDuree(secondes),
+                    style: const TextStyle(
+                      color:      CouleurApp.bleuPrincipal,
+                      fontWeight: FontWeight.w700,
+                      fontSize:   16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 28),
+
+            SizedBox(
+              width:  double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CouleurApp.bleuPrincipal,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize:   16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                child: const Text('Voir ma récompense →'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plein écran félicitations — feux d'artifice + bouton retour accueil
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _EcranFelicitations extends StatefulWidget {
+  const _EcranFelicitations();
+
+  @override
+  State<_EcranFelicitations> createState() => _EcranFelicitationsState();
+}
+
+class _EcranFelicitationsState extends State<_EcranFelicitations>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0C1A2E),
+      body: Stack(
+        children: [
+          // ── Feux d'artifice (animation continue) ───────────────────────
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) => CustomPaint(
+                painter: _PeintreFeux(_ctrl.value),
+              ),
+            ),
+          ),
+
+          // ── Contenu centré ──────────────────────────────────────────────
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('🎉', style: TextStyle(fontSize: 88)),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Bravo !',
+                    style: TextStyle(
+                      color:      Colors.white,
+                      fontSize:   42,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Vous avez brillamment terminé\nvotre séance de travail !',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color:  Color(0xFFB0C4DE),
+                      fontSize: 17,
+                      height:   1.6,
+                    ),
+                  ),
+                  const SizedBox(height: 56),
+                  SizedBox(
+                    width:  double.infinity,
+                    height: 54,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF0C1A2E),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize:   17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      child: const Text('Retour à l\'accueil'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Peintre feux d'artifice — 6 bouquets en phases décalées
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PeintreFeux extends CustomPainter {
+  final double t;
+  const _PeintreFeux(this.t);
+
+  // (cx, cy, phase) — position relative + décalage de phase 0..1
+  static const _bouquets = [
+    (0.20, 0.22, 0.00),
+    (0.75, 0.18, 0.33),
+    (0.50, 0.48, 0.66),
+    (0.12, 0.68, 0.17),
+    (0.82, 0.62, 0.50),
+    (0.45, 0.82, 0.83),
+  ];
+
+  static const _couleurs = [
+    Color(0xFFFF6B6B),
+    Color(0xFFFFD93D),
+    Color(0xFF6BCB77),
+    Color(0xFF4D96FF),
+    Color(0xFFFF6BFF),
+    Color(0xFFFF9F43),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var i = 0; i < _bouquets.length; i++) {
+      final (cx, cy, phase) = _bouquets[i];
+      final lt = (t + phase) % 1.0;
+      _dessinerBouquet(
+        canvas,
+        Offset(cx * size.width, cy * size.height),
+        _couleurs[i % _couleurs.length],
+        lt,
+      );
+    }
+  }
+
+  void _dessinerBouquet(Canvas canvas, Offset centre, Color couleur, double lt) {
+    // Fondu : apparition 0→0.12, plein 0.12→0.65, disparition 0.65→1.0
+    final double alpha;
+    if (lt < 0.12) {
+      alpha = lt / 0.12;
+    } else if (lt < 0.65) {
+      alpha = 1.0;
+    } else {
+      alpha = (1.0 - lt) / 0.35;
+    }
+    if (alpha <= 0.02) return;
+
+    final rayon = lt * 65.0;
+    const nbParticules = 12;
+
+    final peinture = Paint()
+      ..color = couleur.withValues(alpha: alpha)
+      ..style = PaintingStyle.fill;
+
+    for (var j = 0; j < nbParticules; j++) {
+      final angle = (j / nbParticules) * 2 * pi;
+      // Particule principale
+      canvas.drawCircle(
+        Offset(centre.dx + rayon * cos(angle),
+               centre.dy + rayon * sin(angle)),
+        (5.0 * (1.0 - lt * 0.6)).clamp(1.0, 5.0),
+        peinture,
+      );
+      // Traîne intérieure
+      canvas.drawCircle(
+        Offset(centre.dx + rayon * 0.55 * cos(angle),
+               centre.dy + rayon * 0.55 * sin(angle)),
+        (3.0 * (1.0 - lt * 0.6)).clamp(0.5, 3.0),
+        peinture..color = couleur.withValues(alpha: alpha * 0.6),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PeintreFeux old) => old.t != t;
 }
 
 // ── Chip d'état réutilisable ──────────────────────────────────────────────────

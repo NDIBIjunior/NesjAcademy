@@ -56,6 +56,9 @@ dependencies:
   # Permissions système (notifications, DND) pour le mode concentration
   permission_handler: ^11.3.1
 
+  # Son de félicitation à la fin d'une séance
+  audioplayers: ^6.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -77,6 +80,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/sons/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

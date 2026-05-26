@@ -14,6 +14,7 @@ import 'ecrans/analytique/ecran_analytique.dart';
 import 'ecrans/diagnostic/ecran_resultat_diagnostic.dart';
 import 'fournisseurs/fournisseur_auth.dart';
 import 'noyau/navigation_principale.dart';
+import 'noyau/observateur_route.dart';
 import 'noyau/routes.dart';
 import 'noyau/theme.dart';
 
@@ -40,6 +41,7 @@ class NESJAcademyApp extends StatelessWidget {
           GlobalCupertinoLocalizations.delegate,
         ],
         supportedLocales: const [Locale('fr')],
+        navigatorObservers: [observateurRoute],
         initialRoute: Routes.connexion,
         routes: {
           // ── Navigation principale (destination après authentification) ──
