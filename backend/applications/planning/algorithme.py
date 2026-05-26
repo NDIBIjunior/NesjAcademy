@@ -130,9 +130,11 @@ _WEEKDAY_JOUR = {v: k for k, v in _JOUR_WEEKDAY.items()}
 
 def _grouper_par_matiere(sessions):
     """
-    Réordonne une liste de sessions pour regrouper celles de même matière,
-    en préservant l'ordre de première apparition de chaque matière.
-    Ex : [Maths 30m, SVT 30m, Maths 1h45] → [Maths 30m, Maths 1h45, SVT 30m]
+    Fusionne les sessions de meme matiere dans une meme tranche horaire
+    en une seule session (durees additionnees).
+    Ex : [SVT 30m J+2, SVT 30m J+3, Maths 45m] -> [SVT 60m, Maths 45m]
+    Meme matiere, chapitres differents : on garde les donnees du premier
+    chapitre mais la duree totale cumulee.
     """
     ordre_matieres = []
     groupes = {}
@@ -140,9 +142,10 @@ def _grouper_par_matiere(sessions):
         mid = s['matiere_id']
         if mid not in groupes:
             ordre_matieres.append(mid)
-            groupes[mid] = []
-        groupes[mid].append(s)
-    return [s for mid in ordre_matieres for s in groupes[mid]]
+            groupes[mid] = dict(s)
+        else:
+            groupes[mid]['duree_minutes'] += s['duree_minutes']
+    return [groupes[mid] for mid in ordre_matieres]
 
 
 def _planning_par_weekday(dispo):

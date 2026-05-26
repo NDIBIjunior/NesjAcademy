@@ -47,6 +47,7 @@ class EcranProfil extends StatefulWidget {
 
 class _EcranProfilState extends State<EcranProfil> {
   late Future<_DonneesProfil> _futureData;
+  bool _regenerationEnCours = false;
 
   @override
   void initState() {
@@ -64,6 +65,53 @@ class _EcranProfilState extends State<EcranProfil> {
 
   Future<void> _rafraichir() async {
     setState(() => _futureData = _charger());
+  }
+
+  Future<void> _regenererPlanning() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Régénérer le planning'),
+        content: const Text(
+          'Ton planning actuel sera supprimé et recalculé depuis le début. '
+          'Cette action peut prendre quelques secondes.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Régénérer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _regenerationEnCours = true);
+    final rep = await ClientApi.post(Constantes.urlGenererPlanning, {}, avecToken: true);
+    if (!mounted) return;
+    setState(() => _regenerationEnCours = false);
+
+    if (rep.statusCode == 200 || rep.statusCode == 201) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Planning régénéré avec succès !'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF10B981),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erreur ${rep.statusCode} — vérifie tes objectifs et disponibilités.'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: CouleurApp.erreur,
+        ),
+      );
+    }
   }
 
   Future<void> _deconnecter() async {
@@ -148,6 +196,32 @@ class _EcranProfilState extends State<EcranProfil> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+              child: ElevatedButton.icon(
+                onPressed: _regenerationEnCours ? null : _regenererPlanning,
+                icon: _regenerationEnCours
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+                label: Text(
+                  _regenerationEnCours ? 'Génération en cours…' : 'Régénérer mon planning',
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CouleurApp.bleuPrincipal,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: OutlinedButton.icon(
                 onPressed: _deconnecter,
                 icon: const Icon(Icons.logout_rounded, color: CouleurApp.erreur),
