@@ -232,11 +232,11 @@ class _EcranConnexionState extends State<EcranConnexion>
           width:  64,
           height: 64,
           decoration: BoxDecoration(
-            color:        CouleurApp.bleuNuit,
+            color:        CouleurApp.bleuPrincipal,
             borderRadius: BorderRadius.circular(18),
             boxShadow: [
               BoxShadow(
-                color:      CouleurApp.bleuNuit.withValues(alpha: 0.30),
+                color:      CouleurApp.bleuPrincipal.withValues(alpha: 0.30),
                 blurRadius: 28,
                 offset:     const Offset(0, 10),
               ),
@@ -346,11 +346,11 @@ class _EcranConnexionState extends State<EcranConnexion>
         child: Container(
           height: 58,
           decoration: BoxDecoration(
-            color:        CouleurApp.bleuNuit,
+            color:        CouleurApp.bleuPrincipal,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color:      CouleurApp.bleuNuit.withValues(alpha: 0.35),
+                color:      CouleurApp.bleuPrincipal.withValues(alpha: 0.35),
                 blurRadius: 24,
                 offset:     const Offset(0, 10),
               ),
@@ -524,13 +524,13 @@ class _ChampFocusState extends State<_ChampFocus> {
         color:        Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: _enFocus ? CouleurApp.bleuNuit : CouleurApp.bordure,
+          color: _enFocus ? CouleurApp.bleuPrincipal : CouleurApp.bordure,
           width: _enFocus ? 1.8 : 1.0,
         ),
         boxShadow: [
           _enFocus
               ? BoxShadow(
-                  color:      CouleurApp.bleuNuit.withValues(alpha: 0.10),
+                  color:      CouleurApp.bleuPrincipal.withValues(alpha: 0.10),
                   blurRadius: 16,
                   offset:     const Offset(0, 3),
                 )
@@ -558,7 +558,7 @@ class _ChampFocusState extends State<_ChampFocus> {
           labelStyle: GoogleFonts.plusJakartaSans(
             fontSize:   14,
             fontWeight: FontWeight.w400,
-            color: _enFocus ? CouleurApp.bleuNuit : CouleurApp.texteSubtle,
+            color: _enFocus ? CouleurApp.bleuPrincipal : CouleurApp.texteSubtle,
           ),
           prefixIcon: widget.prefixe != null
               ? IntrinsicWidth(child: widget.prefixe!)

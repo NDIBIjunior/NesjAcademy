@@ -491,11 +491,11 @@ class _EcranInscriptionState extends State<EcranInscription>
         child: Container(
           height: 56,
           decoration: BoxDecoration(
-            color:        CouleurApp.accent,
+            color:        CouleurApp.bleuPrincipal,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color:      CouleurApp.accent.withValues(alpha: 0.28),
+                color:      CouleurApp.bleuPrincipal.withValues(alpha: 0.28),
                 blurRadius: 20,
                 offset:     const Offset(0, 8),
               ),
