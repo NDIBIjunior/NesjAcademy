@@ -8,6 +8,7 @@ import '../../donnees/local/stockage_local.dart';
 import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/theme.dart';
+import '../seance/ecran_seance.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Modèle interne
@@ -463,9 +464,30 @@ class _LabelSection extends StatelessWidget {
 
 // ── Carte prochaine séance ────────────────────────────────────────────────────
 
-class _CarteProchainSeance extends StatelessWidget {
+class _CarteProchainSeance extends StatefulWidget {
   final Map<String, dynamic> session;
   const _CarteProchainSeance({required this.session});
+
+  @override
+  State<_CarteProchainSeance> createState() => _CarteProchainSeanceState();
+}
+
+class _CarteProchainSeanceState extends State<_CarteProchainSeance> {
+  bool _pressed = false;
+
+  Future<void> _demarrer() async {
+    setState(() => _pressed = true);
+    await Future.delayed(const Duration(milliseconds: 130));
+    setState(() => _pressed = false);
+    await Future.delayed(const Duration(milliseconds: 60));
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EcranSeance(session: widget.session),
+      ),
+    );
+  }
 
   static const _libellesType = {
     'decouverte':   'Découverte',
@@ -484,14 +506,14 @@ class _CarteProchainSeance extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final chapitre   = session['chapitre'] as Map<String, dynamic>;
+    final chapitre   = widget.session['chapitre'] as Map<String, dynamic>;
     final matiere    = chapitre['matiere_nom'] as String;
     final titre      = chapitre['titre'] as String;
-    final duree      = session['duree_minutes'] as int;
-    final type       = session['type_session'] as String;
+    final duree      = widget.session['duree_minutes'] as int;
+    final type       = widget.session['type_session'] as String;
     final libelle    = _libellesType[type] ?? type;
-    final estPilier  = session['est_pilier'] as bool? ?? false;
-    final heureDebut = session['heure_debut_session'] as String?;
+    final estPilier  = widget.session['est_pilier'] as bool? ?? false;
+    final heureDebut = widget.session['heure_debut_session'] as String?;
     final estRevision = type.startsWith('revision');
 
     final couleurAccent = estPilier
@@ -570,25 +592,30 @@ class _CarteProchainSeance extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // ── Bouton Démarrer ────────────────────────────────────────────
-          SizedBox(
-            width:  double.infinity,
-            height: 44,
-            child: ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: CouleurApp.bleuPrincipal,
-                foregroundColor: Colors.white,
-                elevation:  0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          // ── Bouton Démarrer avec animation ────────────────────────────
+          AnimatedScale(
+            scale:    _pressed ? 0.95 : 1.0,
+            duration: const Duration(milliseconds: 120),
+            curve:    Curves.easeOut,
+            child: SizedBox(
+              width:  double.infinity,
+              height: 44,
+              child: ElevatedButton(
+                onPressed: _demarrer,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CouleurApp.bleuPrincipal,
+                  foregroundColor: Colors.white,
+                  elevation:  0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize:   15,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                textStyle: const TextStyle(
-                  fontSize:   15,
-                  fontWeight: FontWeight.w600,
-                ),
+                child: const Text('Démarrer'),
               ),
-              child: const Text('Démarrer'),
             ),
           ),
         ],
