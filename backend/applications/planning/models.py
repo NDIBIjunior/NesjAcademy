@@ -17,12 +17,27 @@ class Matiere(models.Model):
         (SYSTEME_TECH, "Technique"),
     ]
 
-    # ── Niveaux scolaires couverts (MVP : 3ème et Terminale C) ───────────────
-    TROISIEME = "3eme"
-    TERMINALE_C = "Tle_C"
+    # ── Niveaux scolaires couverts ───────────────────────────────────────────
+    TROISIEME    = "3eme"
+    TERMINALE_A4 = "Tle_A4"
+    TERMINALE_C  = "Tle_C"
+    TERMINALE_D  = "Tle_D"
+    TERMINALE_TI = "Tle_TI"
     NIVEAUX = [
-        (TROISIEME, "3ème (BEPC)"),
-        (TERMINALE_C, "Terminale C (BAC)"),
+        (TROISIEME,    "3ème (BEPC)"),
+        (TERMINALE_A4, "Terminale A4 (Littéraire)"),
+        (TERMINALE_C,  "Terminale C (BAC Scientifique)"),
+        (TERMINALE_D,  "Terminale D (BAC Scientifique)"),
+        (TERMINALE_TI, "Terminale TI (Sciences Industrielles)"),
+    ]
+
+    # ── Filières Terminale ───────────────────────────────────────────────────
+    FILIERES = [
+        ('',   '— (3ème, pas de filière)'),
+        ('A4', 'A4 (Littéraire)'),
+        ('C',  'C (Scientifique)'),
+        ('D',  'D (Scientifique)'),
+        ('TI', 'TI (Sciences Industrielles)'),
     ]
 
     nom = models.CharField(max_length=100)
@@ -31,7 +46,8 @@ class Matiere(models.Model):
     filiere = models.CharField(
         max_length=10,
         blank=True,
-        help_text="Ex : C, D — laisser vide pour la 3ème",
+        choices=FILIERES,
+        help_text="Filière Terminale : A4, C, D, TI — laisser vide pour la 3ème",
     )
     coefficient_minesec = models.PositiveSmallIntegerField(
         help_text="Coefficient officiel utilisé dans le calcul de priorité",

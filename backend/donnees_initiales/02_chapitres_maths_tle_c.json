@@ -1,0 +1,182 @@
+[
+  {
+    "model": "planning.chapitre",
+    "pk": 1,
+    "fields": {
+      "matiere": 1,
+      "titre": "Arithmétique",
+      "ordre": 1,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 2,
+    "fields": {
+      "matiere": 1,
+      "titre": "Nombres Complexes : Approche algébrique",
+      "ordre": 2,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 3,
+    "fields": {
+      "matiere": 1,
+      "titre": "Calculs Barycentiques et Produit vectoriel",
+      "ordre": 3,
+      "duree_estimee_heures": 3
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 4,
+    "fields": {
+      "matiere": 1,
+      "titre": "Nombres Complexes : Approche géométrique",
+      "ordre": 4,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 5,
+    "fields": {
+      "matiere": 1,
+      "titre": "Fonctions numériques d'une variable réelle",
+      "ordre": 5,
+      "duree_estimee_heures": 5
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 6,
+    "fields": {
+      "matiere": 1,
+      "titre": "Statistiques",
+      "ordre": 6,
+      "duree_estimee_heures": 3
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 7,
+    "fields": {
+      "matiere": 1,
+      "titre": "Espaces vectoriels et Applications linéaires en dimension 3",
+      "ordre": 7,
+      "duree_estimee_heures": 5
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 8,
+    "fields": {
+      "matiere": 1,
+      "titre": "Similitudes directes du plan",
+      "ordre": 8,
+      "duree_estimee_heures": 3
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 9,
+    "fields": {
+      "matiere": 1,
+      "titre": "Primitives d'une fonction continue sur un intervalle",
+      "ordre": 9,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 10,
+    "fields": {
+      "matiere": 1,
+      "titre": "Fonctions logarithmes",
+      "ordre": 10,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 11,
+    "fields": {
+      "matiere": 1,
+      "titre": "Fonctions Exponentielles et Fonctions Puissances",
+      "ordre": 11,
+      "duree_estimee_heures": 3
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 12,
+    "fields": {
+      "matiere": 1,
+      "titre": "Suites numériques",
+      "ordre": 12,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 13,
+    "fields": {
+      "matiere": 1,
+      "titre": "Calcul des Intégrales",
+      "ordre": 13,
+      "duree_estimee_heures": 5
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 14,
+    "fields": {
+      "matiere": 1,
+      "titre": "Coniques",
+      "ordre": 14,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 15,
+    "fields": {
+      "matiere": 1,
+      "titre": "Équations différentielles",
+      "ordre": 15,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 16,
+    "fields": {
+      "matiere": 1,
+      "titre": "Isométries de l'espace",
+      "ordre": 16,
+      "duree_estimee_heures": 3
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 17,
+    "fields": {
+      "matiere": 1,
+      "titre": "Probabilités",
+      "ordre": 17,
+      "duree_estimee_heures": 4
+    }
+  },
+  {
+    "model": "planning.chapitre",
+    "pk": 18,
+    "fields": {
+      "matiere": 1,
+      "titre": "Théorie des graphes",
+      "ordre": 18,
+      "duree_estimee_heures": 3
+    }
+  }
+]

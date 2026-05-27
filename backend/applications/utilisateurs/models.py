@@ -39,11 +39,17 @@ class Utilisateur(AbstractBaseUser, PermissionsMixin):
     ]
 
     # ── Constantes de niveau scolaire ────────────────────────────────────────
-    TROISIEME = "3eme"
-    TERMINALE_C = "Tle_C"
+    TROISIEME    = "3eme"
+    TERMINALE_A4 = "Tle_A4"
+    TERMINALE_C  = "Tle_C"
+    TERMINALE_D  = "Tle_D"
+    TERMINALE_TI = "Tle_TI"
     NIVEAUX = [
-        (TROISIEME, "3ème (BEPC)"),
-        (TERMINALE_C, "Terminale C (BAC)"),
+        (TROISIEME,    "3ème (BEPC)"),
+        (TERMINALE_A4, "Terminale A4 (Littéraire)"),
+        (TERMINALE_C,  "Terminale C (BAC)"),
+        (TERMINALE_D,  "Terminale D"),
+        (TERMINALE_TI, "Terminale TI"),
     ]
 
     # ── Constantes de système scolaire ───────────────────────────────────────

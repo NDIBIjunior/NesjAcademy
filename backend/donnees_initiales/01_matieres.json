@@ -1,0 +1,706 @@
+[
+  {
+    "model": "planning.matiere",
+    "pk": 1,
+    "fields": {
+      "nom": "Mathématiques",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 7,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 1
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 2,
+    "fields": {
+      "nom": "Physique",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 4,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 2
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 3,
+    "fields": {
+      "nom": "Chimie",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 3
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 4,
+    "fields": {
+      "nom": "SVT",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 4
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 5,
+    "fields": {
+      "nom": "Informatique",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 5
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 6,
+    "fields": {
+      "nom": "Philosophie",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 6
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 7,
+    "fields": {
+      "nom": "Anglais",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 3,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 7
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 8,
+    "fields": {
+      "nom": "Langue Française",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 8
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 9,
+    "fields": {
+      "nom": "Littérature",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 9
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 10,
+    "fields": {
+      "nom": "Géographie",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 10
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 11,
+    "fields": {
+      "nom": "Éducation Civique",
+      "systeme": "FR",
+      "niveau": "Tle_C",
+      "filiere": "C",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 11
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 12,
+    "fields": {
+      "nom": "Mathématiques",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 4,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 1
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 13,
+    "fields": {
+      "nom": "Physique",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 2
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 14,
+    "fields": {
+      "nom": "Chimie",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 3
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 15,
+    "fields": {
+      "nom": "SVT",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 6,
+      "necessite_diagnostic": true,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 4
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 16,
+    "fields": {
+      "nom": "Informatique",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 5
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 17,
+    "fields": {
+      "nom": "Philosophie",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 6
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 18,
+    "fields": {
+      "nom": "Anglais",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 3,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 7
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 19,
+    "fields": {
+      "nom": "Langue Française",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 8
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 20,
+    "fields": {
+      "nom": "Littérature",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 9
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 21,
+    "fields": {
+      "nom": "Géographie",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 10
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 22,
+    "fields": {
+      "nom": "Éducation Civique",
+      "systeme": "FR",
+      "niveau": "Tle_D",
+      "filiere": "D",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 11
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 23,
+    "fields": {
+      "nom": "Mathématiques",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 4,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 1
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 24,
+    "fields": {
+      "nom": "Physique",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 2
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 25,
+    "fields": {
+      "nom": "Chimie",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 3
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 26,
+    "fields": {
+      "nom": "SVT",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 4
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 27,
+    "fields": {
+      "nom": "Informatique",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 10,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 60,
+      "ordre_affichage": 5
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 28,
+    "fields": {
+      "nom": "Philosophie",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 6
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 29,
+    "fields": {
+      "nom": "Anglais",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 3,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 7
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 30,
+    "fields": {
+      "nom": "Langue Française",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 8
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 31,
+    "fields": {
+      "nom": "Littérature",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 9
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 32,
+    "fields": {
+      "nom": "Géographie",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 10
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 33,
+    "fields": {
+      "nom": "Éducation Civique",
+      "systeme": "FR",
+      "niveau": "Tle_TI",
+      "filiere": "TI",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 11
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 34,
+    "fields": {
+      "nom": "Mathématiques",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 1
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 35,
+    "fields": {
+      "nom": "SVT",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 1,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 2
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 36,
+    "fields": {
+      "nom": "Informatique",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": true,
+      "necessite_exercices": true,
+      "duree_lecture_minutes": 45,
+      "duree_exercices_minutes": 45,
+      "ordre_affichage": 3
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 37,
+    "fields": {
+      "nom": "Philosophie",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 4,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 4
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 38,
+    "fields": {
+      "nom": "Anglais",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 4,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 5
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 39,
+    "fields": {
+      "nom": "Langue Française",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 6
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 40,
+    "fields": {
+      "nom": "Littérature",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 3,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 7
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 41,
+    "fields": {
+      "nom": "Histoire",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 8
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 42,
+    "fields": {
+      "nom": "Géographie",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 9
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 43,
+    "fields": {
+      "nom": "Éducation Civique",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 2,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 10
+    }
+  },
+  {
+    "model": "planning.matiere",
+    "pk": 44,
+    "fields": {
+      "nom": "Langue Vivante II",
+      "systeme": "FR",
+      "niveau": "Tle_A4",
+      "filiere": "A4",
+      "coefficient_minesec": 3,
+      "necessite_diagnostic": false,
+      "necessite_exercices": false,
+      "duree_lecture_minutes": 60,
+      "duree_exercices_minutes": 0,
+      "ordre_affichage": 11
+    }
+  }
+]
