@@ -60,9 +60,37 @@ class Matiere(models.Model):
         default=False,
         help_text="True = l'algorithme génère 2 sessions par chapitre : lecture puis exercices",
     )
+
+    # ── Catégorie cognitive ──────────────────────────────────────────────────
+    # Détermine la priorité de planification et les durées de session.
+    HCC_PUR   = "hcc_pur"    # Exercices intensifs : Maths, Physique
+    HCC_MIXTE = "hcc_mixte"  # Exercices + lecture : Chimie, SVT, Informatique
+    LECTURE   = "lecture"    # Mémorisation / rédaction : Philo, Français, Géo…
+    SPORT     = "sport"      # EPS — pas de session cognitive
+
+    CATEGORIES = [
+        (HCC_PUR,   "HCC pur (exercices intensifs)"),
+        (HCC_MIXTE, "HCC mixte (exercices + lecture)"),
+        (LECTURE,   "Lecture / mémorisation"),
+        (SPORT,     "EPS / Sport"),
+    ]
+
+    categorie = models.CharField(
+        max_length=20,
+        choices=CATEGORIES,
+        default=LECTURE,
+        help_text=(
+            "Catégorie cognitive : hcc_pur → 90 min/session (Maths, Physique) ; "
+            "hcc_mixte → 60 min (Chimie, SVT) ; lecture → durée libre (Philo, Géo…)"
+        ),
+    )
+
     duree_lecture_minutes = models.PositiveSmallIntegerField(
         default=60,
-        help_text="Durée de la session de lecture/cours (en minutes)",
+        help_text=(
+            "Durée recommandée de la révision immédiate pour les matières LECTURE "
+            "(ignoré pour hcc_pur=90 min et hcc_mixte=60 min fixés par l'algo)"
+        ),
     )
     duree_exercices_minutes = models.PositiveSmallIntegerField(
         default=0,
@@ -176,7 +204,9 @@ class PlanEtude(models.Model):
 class SessionEtude(models.Model):
     """Session de travail quotidienne planifiée par l'algorithme de révision espacée."""
 
+    # Anticipation : session de préparation la veille d'un cours au lycée
     # Révision espacée : J+1, J+3, J+7, J+14 après la session de découverte
+    ANTICIPATION       = "anticipation"
     DECOUVERTE         = "decouverte"
     REVISION_IMMEDIATE = "revision_immediate"
     REVISION_J1        = "revision_j1"
@@ -184,6 +214,7 @@ class SessionEtude(models.Model):
     REVISION_J7        = "revision_j7"
     REVISION_J14       = "revision_j14"
     TYPES_SESSION = [
+        (ANTICIPATION,       "Anticipation (veille du cours)"),
         (DECOUVERTE,         "Découverte"),
         (REVISION_IMMEDIATE, "Révision immédiate"),
         (REVISION_J1,        "Révision J+1"),

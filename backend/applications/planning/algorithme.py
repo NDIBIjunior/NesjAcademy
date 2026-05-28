@@ -82,6 +82,7 @@ from .models import (
     Matiere,
     ObjectifMatiere,
     PlanEtude,
+    PositionProgramme,
     ProgressionChapitre,
     SessionEtude,
     TrancheHoraire,
@@ -716,525 +717,417 @@ class SessionConstructeur:
         return sessions_entrelacees
 
     # ─────────────────────────────────────────────────────────────────────────
-    # MÉTHODE B : planifier_calendrier
+    # MÉTHODE B : planifier_calendrier  (fenêtre glissante — 3 règles)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def planifier_calendrier(self, eleve, sessions_non_datees):
+    def planifier_calendrier(self, eleve, nb_jours=14, date_debut=None):
         """
-        Assigne une date et une tranche horaire à chaque session.
+        Génère les sessions sur une fenêtre glissante de nb_jours jours.
 
         ══════════════════════════════════════════════════════════════════════
-        FONCTIONNEMENT DÉTAILLÉ
+        3 RÈGLES — dans l'ordre de priorité pour chaque tranche
         ══════════════════════════════════════════════════════════════════════
 
-        On parcourt le calendrier jour par jour, de demain jusqu'à la date
-        d'examen. Pour chaque jour de travail :
+        RÈGLE 1 — ANTICIPATION
+            Tranche matin (avant 14h) : préparer les matières du jour même.
+            Le cours est dans quelques heures → priming cognitif optimal.
+            Tranche soir : préparer les matières de DEMAIN si temps restant.
+            La veille au soir est le 2e meilleur moment de priming.
+            Durée fixe : 30 min / matière. Ordre : coefficient décroissant.
 
-        1. On récupère les tranches horaires du jour (ex : 16h–18h = 120 min).
+        RÈGLE 2 — RÉVISION_IMMÉDIATE (tranche soir uniquement)
+            Consolider ce qui vient d'être vu au lycée aujourd'hui.
+            Durée : 90 min si HCC (necessite_exercices=True), 60 min sinon.
+            Ordre : coefficient MINESEC décroissant (Maths avant Philosophie).
+            → Déclenche automatiquement les révisions J+1/J+3/J+7/J+14
+              sur le meilleur jour disponible dans chaque fenêtre adaptative.
 
-        2. On initialise les révisions dues (révisions espacées déclenchées
-           par une session passée : J+1, J+3, J+7, J+14).
-
-        3. Pour chaque tranche, on remplit dans l'ordre de priorité :
-
-           BOUSSOLE LYCEE — orienter sans contraindre
-               L'emploi du temps sert de boussole de routine hebdo.
-               Si l'élève a Maths le lundi, on préfère une session Maths
-               lundi soir — mais sans forcer ni bloquer les autres matières.
-
-           PRIORITÉ 1 — Révisions espacées dues aujourd'hui
-               J+1 après la session d'hier, J+3, J+7, J+14…
-               Ces blocs de 30 min sont placés en priorité.
-
-           PRIORITÉ 2 — Sessions de découverte (depuis la file entrelacée)
-               On prend dans l'ordre de la file.
-               Règle max 2 matières/jour : si on a déjà 2 matières différentes,
-               on cherche une session d'une matière déjà commencée aujourd'hui.
-               CORRECTION : la dernière session est écourtée pour remplir
-               EXACTEMENT les minutes restantes (plus de gaspillage).
-
-        4. À la fin de la tranche, les révisions non placées sont reportées
-           au lendemain (elles ne sont pas perdues).
+        RÈGLE 3 — RÉVISIONS ESPACÉES ADAPTATIVES
+            J+1/J+3/J+7/J+14 dues aujourd'hui, placées dans le temps restant.
+            Si la tranche est pleine : reportées au lendemain.
 
         ══════════════════════════════════════════════════════════════════════
-        CORRECTION DU GASPILLAGE DE TEMPS
+        PLACEMENT ADAPTATIF DES RÉVISIONS ESPACÉES
         ══════════════════════════════════════════════════════════════════════
 
-        Ancien problème :
-            Tranche = 90 min, sessions de 60 min.
-            → Session 1 placée (60 min), 30 min restantes.
-            → L'algorithme essayait de placer une session de 60 min → impossible.
-            → BREAK. 30 min perdues.
-
-        Correction :
-            duree_effective = min(session['duree_minutes'], minutes_restantes)
-            → Si minutes_restantes = 30 et session = 60 min → duree_effective = 30 min.
-            → La session est écourtée, mais placée. Zéro gaspillage.
-
+        Les délais J+1/J+3/J+7/J+14 sont des FENÊTRES, pas des dates fixes.
+        Pour chaque révision, _trouver_meilleure_date_revision() cherche
+        dans [idéal-1j, idéal+2j] le meilleur jour selon :
+          1. Jour avec ce cours au lycée  → renforcement contextuel optimal
+          2. Jour sans matière HCC        → bande passante cognitive disponible
+          3. Jour le plus proche de la date idéale
         ══════════════════════════════════════════════════════════════════════
 
         Retourne une liste de dicts prêts à devenir des SessionEtude en base.
         """
-        logger.info("Etape 4 : Planification du calendrier")
+        logger.info("Planification fenetre glissante : %d jours", nb_jours)
+
+        if date_debut is None:
+            date_debut = date.today()
+
+        date_examen        = eleve.date_examen
+        date_fin_window    = date_debut + timedelta(days=nb_jours - 1)
+        date_limite_revisions = date_examen if date_examen else date_fin_window
 
         try:
             dispo = eleve.disponibilite
         except DisponibiliteEleve.DoesNotExist:
             raise ValueError("L'élève n'a pas encore défini ses disponibilités.")
 
-        # ── Construire plages_par_wd : {weekday: [(duree_min, tranche_obj|None)]} ──
-        #
-        # Pour chaque jour de la semaine, on connaît les tranches horaires disponibles.
-        # Exemple : lundi → [(120, <TrancheHoraire 16h-18h>)]
-        #
+        # ── Tranches par jour de semaine : {weekday: [(duree_min, tranche_obj)]} ──
         toutes_tranches = list(
             dispo.tranches.all()
             .select_related('matiere_principale')
             .order_by('heure_debut')
         )
-        if toutes_tranches:
-            plages_par_wd: dict = {}
-            for t in toutes_tranches:
-                wd = _JOUR_WEEKDAY[t.jour]
-                plages_par_wd.setdefault(wd, []).append((t.duree_minutes, t))
-        else:
-            # Fallback : ancien système booléen+heures → une plage sans tranche obj
-            config = [
-                (0, dispo.lundi_dispo,    dispo.heures_lundi),
-                (1, dispo.mardi_dispo,    dispo.heures_mardi),
-                (2, dispo.mercredi_dispo, dispo.heures_mercredi),
-                (3, dispo.jeudi_dispo,    dispo.heures_jeudi),
-                (4, dispo.vendredi_dispo, dispo.heures_vendredi),
-                (5, dispo.samedi_dispo,   dispo.heures_samedi),
-                (6, dispo.dimanche_dispo, dispo.heures_dimanche),
-            ]
-            plages_par_wd = {
-                wd: [(int(h * 60), None)]
-                for wd, actif, h in config if actif and h > 0
-            }
+        if not toutes_tranches:
+            raise ValueError("Aucune tranche horaire définie.")
 
-        date_debut = date.today()
-        date_fin   = eleve.date_examen
+        plages_par_wd: dict = {}
+        for t in toutes_tranches:
+            wd = _JOUR_WEEKDAY[t.jour]
+            plages_par_wd.setdefault(wd, []).append((t.duree_minutes, t))
 
-        # ── Emploi du temps lycée : {weekday: set(matiere_id)} ──────────────
-        #
-        # Boussole de routine : indique quelles matieres l'eleve a au lycee
-        # chaque jour de la semaine. Pas de revision forcee - on prefere juste
-        # ces matieres ce jour-la pour creer une routine hebdomadaire stable.
-        #
-        cours_par_weekday: dict = {}
+        # ── Emploi du temps lycée : {weekday: set(matiere_id)} ──────────────────
+        cours_par_wd: dict  = {}
+        matieres_ids_lycee: set = set()
         for cours in CoursHebdomadaire.objects.filter(eleve=eleve).select_related('matiere'):
             wd = _JOUR_WEEKDAY[cours.jour]
-            cours_par_weekday.setdefault(wd, set()).add(cours.matiere_id)
+            cours_par_wd.setdefault(wd, set()).add(cours.matiere_id)
+            matieres_ids_lycee.add(cours.matiere_id)
 
-        # ── Étape 1 : identifier les matières piliers ────────────────────────────
-        #
-        # On trie tous les objectifs de l'élève par poids décroissant.
-        # Poids = niveau_difficulte × coefficient_minesec (coefficients officiels MINESEC).
-        # Ex Tle C : Maths diff=3 coeff=9 → poids=27. Anglais diff=1 coeff=2 → poids=2.
-        #
-        # Les NB_MATIERES_PILIERS matières les plus lourdes deviennent des "piliers" :
-        # elles auront une session fixe exclusive chaque semaine (étape 2).
-        #
-        objectifs_tries = sorted(
-            ObjectifMatiere.objects.filter(eleve=eleve).select_related('matiere'),
-            key=lambda o: o.niveau_difficulte * o.matiere.coefficient_minesec,
-            reverse=True,
-        )
-        nb_piliers = min(NB_MATIERES_PILIERS, len(objectifs_tries))
-        matieres_piliers: set = {o.matiere_id for o in objectifs_tries[:nb_piliers]}
-
-        logger.info(
-            "Piliers identifies (%d) : %s",
-            nb_piliers,
-            [o.matiere.nom for o in objectifs_tries[:nb_piliers]],
-        )
-
-        # ── Matières à Haute Charge Cognitive (HCC) ───────────────────────────
-        #
-        # Parmi les piliers, celles qui nécessitent des exercices (maths,
-        # physique-chimie...) forment un groupe "HCC".
-        # Règle absolue : deux matières HCC ne peuvent jamais être placées
-        # le MÊME JOUR — chacune nécessite toute la capacité de réflexion
-        # de l'élève pour être efficace.
-        #
-        matieres_hcc: set = {
-            o.matiere_id
-            for o in objectifs_tries[:nb_piliers]
-            if o.matiere.necessite_exercices
-        }
-        logger.info(
-            "Matieres HCC (jamais le meme jour) : %s",
-            [o.matiere.nom for o in objectifs_tries[:nb_piliers] if o.matiere.necessite_exercices],
-        )
-
-        # ── Étape 2 : choisir le meilleur jour d'ancrage pour chaque pilier ──
-        #
-        # Pour chaque matiere pilier (traitées dans l'ordre du poids, donc
-        # la plus importante en premier), on cherche le meilleur jour disponible.
-        #
-        # Règles de priorité (dans l'ordre) :
-        #   1. Jour où la matiere est au programme scolaire (boussole lycee)
-        #      ET le jour a assez de temps (>= DUREE_SESSION_PILIER)
-        #      ET le jour n'est pas déjà pris par un autre pilier.
-        #   2. N'importe quel jour avec assez de temps, pas encore pris.
-        #   3. Si aucun jour unique disponible : on partage le meilleur jour
-        #      (cas rare avec beaucoup de piliers et peu de jours de travail).
-        #
-        # Résultat : jour_par_pilier = {matiere_id: weekday (0=lundi … 6=dimanche)}
-        #
-        temps_par_wd = {
-            wd: sum(duree for duree, _ in plages)
-            for wd, plages in plages_par_wd.items()
-        }
-
-        jour_par_pilier: dict = {}   # {matiere_id: weekday}
-        jours_pris      = set()      # un jour = un seul pilier (si possible)
-
-        for obj in objectifs_tries[:nb_piliers]:
-            mat_id = obj.matiere_id
-
-            # Jours avec ce cours au lycée + temps suffisant + pas encore pris
-            jours_lycee = {
-                wd for wd, mats in cours_par_weekday.items()
-                if mat_id in mats
-                and temps_par_wd.get(wd, 0) >= DUREE_SESSION_PILIER
-                and wd not in jours_pris
-            }
-
-            if jours_lycee:
-                # Parmi ces jours, on prend celui qui a le plus de temps libre
-                meilleur = max(jours_lycee, key=lambda w: temps_par_wd.get(w, 0))
-            else:
-                # Fallback 1 : n'importe quel jour disponible non encore pris
-                jours_libres = {
-                    wd for wd, total in temps_par_wd.items()
-                    if total >= DUREE_SESSION_PILIER and wd not in jours_pris
-                }
-                if jours_libres:
-                    meilleur = max(jours_libres, key=lambda w: temps_par_wd.get(w, 0))
-                else:
-                    # Fallback 2 (rare) : on partage le jour le plus chargé
-                    jours_valides = {
-                        wd for wd, total in temps_par_wd.items()
-                        if total >= DUREE_SESSION_PILIER
-                    }
-                    if not jours_valides:
-                        logger.warning(
-                            "Pilier %s : aucun jour avec %d min disponibles, ignore.",
-                            obj.matiere.nom, DUREE_SESSION_PILIER,
-                        )
-                        continue
-                    meilleur = max(jours_valides, key=lambda w: temps_par_wd.get(w, 0))
-
-            jour_par_pilier[mat_id] = meilleur
-            jours_pris.add(meilleur)
-            logger.info(
-                "  Pilier %-15s -> %s (%d min dispo ce jour)",
-                obj.matiere.nom,
-                _WEEKDAY_JOUR[meilleur],
-                temps_par_wd.get(meilleur, 0),
+        if not matieres_ids_lycee:
+            raise ValueError(
+                "Aucune matière dans l'emploi du temps lycée. "
+                "Renseigne ton emploi du temps avant de générer le planning."
             )
 
-        # ── État initial de la planification ──────────────────────────────────
-        file_sessions        = deque(sessions_non_datees)  # File entrelacée des sessions à placer
-        revisions_en_attente: dict = {}                    # {date: [session_dict, ...]}
-        sessions_datees      = []                          # Résultat final
-        matieres_hier        = set()                       # Pour l'alternance
-        reviseur             = RevisionEspacee()
+        # ── Matières HCC : necessite_exercices=True → charge cognitive élevée ──
+        matieres_hcc: set = set(
+            Matiere.objects.filter(id__in=matieres_ids_lycee, necessite_exercices=True)
+            .values_list('id', flat=True)
+        )
 
-        # ── Boucle principale : un jour à la fois ─────────────────────────────
+        # ── Infos matières (coefficient, necessite_exercices) ────────────────────
+        matieres_info: dict = {
+            m.id: m for m in Matiere.objects.filter(id__in=matieres_ids_lycee)
+        }
+
+        # ── Chapitre actif par matière (PositionProgramme → 1er chapitre) ───────
+        chapitres_actifs: dict = {}
+        for pos in PositionProgramme.objects.filter(
+            eleve=eleve, matiere_id__in=matieres_ids_lycee
+        ).select_related('chapitre_actuel'):
+            if pos.chapitre_actuel:
+                chapitres_actifs[pos.matiere_id] = pos.chapitre_actuel
+
+        for mat_id in matieres_ids_lycee:
+            if mat_id not in chapitres_actifs:
+                premier = Chapitre.objects.filter(matiere_id=mat_id).order_by('ordre').first()
+                if premier:
+                    chapitres_actifs[mat_id] = premier
+
+        logger.info(
+            "  Matieres lycee : %d | HCC : %d | Chapitres actifs : %d",
+            len(matieres_ids_lycee), len(matieres_hcc), len(chapitres_actifs),
+        )
+
+        # ── Rang de catégorie : HCC_PUR(0) > HCC_MIXTE(1) > LECTURE(2) > SPORT(3)
+        _CAT_RANG = {
+            Matiere.HCC_PUR:   0,
+            Matiere.HCC_MIXTE: 1,
+            Matiere.LECTURE:   2,
+            Matiere.SPORT:     3,
+        }
+
+        def _priorite(mat_id):
+            """Clé de tri : catégorie cognitive d'abord, coefficient décroissant ensuite."""
+            m = matieres_info.get(mat_id)
+            if m is None:
+                return (3, 0)
+            return (_CAT_RANG.get(m.categorie, 2), -(m.coefficient_minesec or 1))
+
+        def _duree_revimm(mat_id):
+            """
+            Durée recommandée pour la RÉVISION_IMMÉDIATE selon la catégorie :
+              hcc_pur   → 90 min (exercices intensifs)
+              hcc_mixte → 60 min (exercices + lecture)
+              lecture   → duree_lecture_minutes (variable par filière)
+              sport     → 0 (pas de session cognitive)
+            """
+            m = matieres_info.get(mat_id)
+            if m is None:
+                return 60
+            cat = m.categorie
+            if cat == Matiere.HCC_PUR:
+                return 120   # 2h : matières de base à exercices intensifs
+            if cat == Matiere.HCC_MIXTE:
+                return 60
+            if cat == Matiere.SPORT:
+                return 0
+            return m.duree_lecture_minutes   # LECTURE : valeur par filière
+
+        sessions_datees: list  = []
+        revisions_en_attente: dict = {}   # {date: [session_dict, ...]}
+
+        # Boucle principale : un jour à la fois
         jour_courant = date_debut
-        while jour_courant <= date_fin and (file_sessions or revisions_en_attente):
+        while jour_courant <= date_fin_window:
 
-            plages_du_jour = plages_par_wd.get(jour_courant.weekday(), [])
+            wd_courant     = jour_courant.weekday()
+            wd_demain      = (jour_courant + timedelta(days=1)).weekday()
+            plages_du_jour = plages_par_wd.get(wd_courant, [])
             revisions_dues = revisions_en_attente.pop(jour_courant, [])
 
-            # Jour non travaillé : reporter les révisions dues au lendemain
+            # Jour sans tranche : reporter les révisions au lendemain
             if not plages_du_jour:
                 for rev in revisions_dues:
-                    self._reporter_revision(rev, jour_courant, date_fin, revisions_en_attente)
+                    self._reporter_revision(
+                        rev, jour_courant, date_limite_revisions, revisions_en_attente
+                    )
                 jour_courant += timedelta(days=1)
                 continue
 
-            # ── Variables du jour ─────────────────────────────────────────────
-            matieres_du_jour   = set()    # Matières déjà étudiées aujourd'hui (max 2)
-            revisions_a_placer = list(revisions_dues)
-            cours_du_jour_set  = cours_par_weekday.get(jour_courant.weekday(), set())
+            cours_ce_jour = cours_par_wd.get(wd_courant, set())
+            cours_demain  = cours_par_wd.get(wd_demain,  set())
 
-            # Piliers dont c'est le jour d'ancrage aujourd'hui
-            piliers_du_jour = {
-                mat_id for mat_id, wd in jour_par_pilier.items()
-                if wd == jour_courant.weekday()
-            }
-            # Piliers déjà placés aujourd'hui (évite la duplication si 2+ tranches)
-            piliers_places = set()
-            # HCC déjà placées aujourd'hui — une seule par jour maximum
-            hcc_du_jour    = set()
+            # Tri unifié : HCC_PUR > HCC_MIXTE > LECTURE > SPORT, puis coeff ↓
+            matieres_ce_jour_triees = sorted(cours_ce_jour, key=_priorite)
+            matieres_demain_triees  = sorted(cours_demain,  key=_priorite)
 
-            # ── Boussole lycee + alternance : choisir la premiere session ────
-            #
-            # Priorite :
-            #   1. Matiere du lycee aujourd'hui, differente d'hier  -> routine hebdo
-            #   2. Matiere du lycee aujourd'hui (meme si repete)    -> garder la routine
-            #   3. Alternance simple : eviter la meme matiere qu'hier
-            #
-            # L'emploi du temps est une boussole, pas une contrainte :
-            # au Cameroun un eleve peut avoir 5+ cours par jour, on ne force
-            # pas la revision immediate de tous ces cours le soir meme.
-            #
-            if file_sessions and cours_du_jour_set:
-                # Essai 1 : matiere lycee aujourd'hui, differente d'hier
-                trouve = False
-                for i, sess in enumerate(file_sessions):
-                    if sess['matiere_id'] in cours_du_jour_set and sess['matiere_id'] not in matieres_hier:
-                        if i > 0:
-                            file_sessions.rotate(-i)
-                        trouve = True
-                        break
-                if not trouve:
-                    # Essai 2 : n'importe quelle matiere lycee aujourd'hui
-                    for i, sess in enumerate(file_sessions):
-                        if sess['matiere_id'] in cours_du_jour_set:
-                            if i > 0:
-                                file_sessions.rotate(-i)
-                            break
-            elif file_sessions and file_sessions[0]['matiere_id'] in matieres_hier:
-                # Pas de matiere lycee aujourd'hui : eviter la repetition d'hier
-                for i, sess in enumerate(file_sessions):
-                    if sess['matiere_id'] not in matieres_hier:
-                        file_sessions.rotate(-i)
-                        break
+            # Filtre : matières d'anticipation = HCC uniquement (pas de lectures)
+            # Évite de surcharger le matin avec des séances de 30 min inutiles
+            def _est_hcc(mat_id):
+                m = matieres_info.get(mat_id)
+                return m and m.categorie in (Matiere.HCC_PUR, Matiere.HCC_MIXTE)
 
-            # ── Traitement tranche par tranche ────────────────────────────────
+            hcc_ce_jour  = [m for m in matieres_ce_jour_triees if _est_hcc(m)]
+            hcc_demain   = [m for m in matieres_demain_triees  if _est_hcc(m)]
+
+            revisions_non_placees = list(revisions_dues)
+
             for (duree_tranche, tranche_obj) in plages_du_jour:
-                minutes_restantes = duree_tranche
-                buffer_tranche    = []  # sessions de cette tranche, regroupées en fin de boucle
+                minutes_restantes     = duree_tranche
+                est_matin             = tranche_obj and tranche_obj.heure_debut.hour < 14
+                # Une matière = une seule session par tranche, peu importe le type.
+                mat_ids_dans_tranche: set = set()
 
                 # ═══════════════════════════════════════════════════════════════
-                # PRIORITÉ 0 — Session pilier (matière à fort coeff, jour fixe)
+                # RÈGLE 1a — ANTICIPATION matin (tranche avant 14h)
+                #   Seulement les matières HCC (Maths, Physique, Chimie…).
+                #   Limité à 3 matières max : priming ciblé, pas marathon.
+                #   Durée fixe : 30 min / matière HCC.
                 # ═══════════════════════════════════════════════════════════════
-                #
-                # Si aujourd'hui est le jour d'ancrage d'une matière pilier,
-                # on place sa session exclusive AVANT tout le reste.
-                # Durée : DUREE_SESSION_PILIER (90 min) ou le temps restant.
-                #
-                # Règles :
-                #   - Un seul pilier par jour est autorisé (jours_pris à l'étape 2).
-                #   - Si la tranche est trop courte, on reporte à la tranche suivante.
-                #   - Le pilier compte comme l'une des 2 matières du jour.
-                #   - Les révisions espacées du pilier sont programmées normalement.
-                #
-                for mat_id in list(piliers_du_jour):
-                    if mat_id in piliers_places:
-                        continue  # déjà placé dans une tranche précédente
-                    if minutes_restantes < DUREE_MINIMALE_SESSION:
-                        break     # tranche trop courte, on tentera la suivante
-
-                    # Règle HCC : Maths et Physique-Chimie ne peuvent jamais
-                    # être dans la même journée. Si une autre matière HCC a déjà
-                    # été placée aujourd'hui, on reporte ce pilier au lendemain.
-                    if mat_id in matieres_hcc and hcc_du_jour and mat_id not in hcc_du_jour:
-                        logger.debug(
-                            "  [%s] HCC : pilier %s reporte (conflit avec %s)",
-                            jour_courant, mat_id, hcc_du_jour,
-                        )
-                        piliers_places.add(mat_id)
-                        continue
-
-                    sess_pilier = _retirer_session_matiere(file_sessions, mat_id)
-                    if sess_pilier is None:
-                        piliers_places.add(mat_id)  # budget épuisé pour ce pilier
-                        continue
-
-                    duree_eff = min(DUREE_SESSION_PILIER, minutes_restantes)
-                    buffer_tranche.append({
-                        **sess_pilier,
-                        'date':            jour_courant,
-                        'duree_minutes':   duree_eff,
-                        'tranche_horaire': tranche_obj,
-                        'est_pilier':      True,
-                        'est_optionnelle': False,
-                    })
-                    matieres_du_jour.add(mat_id)
-                    minutes_restantes -= duree_eff
-                    piliers_places.add(mat_id)
-                    if mat_id in matieres_hcc:
-                        hcc_du_jour.add(mat_id)
-
-                    for rev in reviseur.creer_revisions(sess_pilier, jour_courant, date_fin):
-                        revisions_en_attente.setdefault(rev['date'], []).append(rev)
-
-                    logger.debug(
-                        "  [%s] Pilier %s : %d min",
-                        jour_courant, mat_id, duree_eff,
-                    )
-
-                # ═══════════════════════════════════════════════════════════════
-                # PRIORITÉ 1 — Révisions espacées dues aujourd'hui (J+1/J+3/J+7/J+14)
-                # ═══════════════════════════════════════════════════════════════
-                #
-                # Les révisions espacées ne sont PAS soumises à la règle des
-                # 2 matières/jour — les rater détruirait l'effet Ebbinghaus.
-                # Seul le temps restant peut les bloquer.
-                # Si le temps manque : reportée demain + créée en optionnelle
-                # aujourd'hui pour l'élève qui aurait du temps libre.
-                #
-                restantes_apres = []
-                for rev in revisions_a_placer:
-                    if minutes_restantes < DUREE_MINIMALE_SESSION:
-                        restantes_apres.append(rev)
-                        continue
-                    duree_rev = min(rev['duree_minutes'], minutes_restantes)
-                    buffer_tranche.append({
-                        **rev,
-                        'date':            jour_courant,
-                        'duree_minutes':   duree_rev,
-                        'tranche_horaire': tranche_obj,
-                        'est_optionnelle': False,
-                    })
-                    matieres_du_jour.add(rev['matiere_id'])
-                    minutes_restantes -= duree_rev
-                revisions_a_placer = restantes_apres
-
-                # ═══════════════════════════════════════════════════════════════
-                # PRIORITÉ 2a — Matière principale fixée pour ce créneau
-                # ═══════════════════════════════════════════════════════════════
-                #
-                # Si l'élève a choisi "ce lundi soir = Maths", on place d'abord
-                # autant de sessions Maths que le temps le permet, AVANT le
-                # round-robin. La matière principale n'est pas soumise à la règle
-                # max 2 matières/jour — c'est un choix intentionnel de l'élève.
-                #
-                mat_principale_id = (
-                    tranche_obj.matiere_principale_id
-                    if tranche_obj and tranche_obj.matiere_principale_id
-                    else None
-                )
-                if mat_principale_id:
-                    while minutes_restantes >= DUREE_MINIMALE_SESSION:
-                        sess_p = _retirer_session_matiere(file_sessions, mat_principale_id)
-                        if sess_p is None:
+                if est_matin:
+                    nb_anticipation = 0
+                    for mat_id in hcc_ce_jour:
+                        if nb_anticipation >= 3 or minutes_restantes < 30:
                             break
-                        duree_p = min(sess_p['duree_minutes'], minutes_restantes)
-                        if duree_p < DUREE_MINIMALE_SESSION:
-                            file_sessions.appendleft(sess_p)
-                            break
-                        buffer_tranche.append({
-                            **sess_p,
+                        if mat_id in mat_ids_dans_tranche:
+                            continue
+                        chapitre = chapitres_actifs.get(mat_id)
+                        if not chapitre:
+                            continue
+                        sessions_datees.append({
+                            'chapitre':        chapitre,
+                            'chapitre_id':     chapitre.id,
+                            'matiere_id':      mat_id,
+                            'duree_minutes':   30,
+                            'type_session':    SessionEtude.ANTICIPATION,
                             'date':            jour_courant,
-                            'duree_minutes':   duree_p,
                             'tranche_horaire': tranche_obj,
                             'est_optionnelle': False,
+                            'est_pilier':      False,
                         })
-                        matieres_du_jour.add(mat_principale_id)
-                        minutes_restantes -= duree_p
-                        for rev in reviseur.creer_revisions(sess_p, jour_courant, date_fin):
-                            revisions_en_attente.setdefault(rev['date'], []).append(rev)
+                        minutes_restantes -= 30
+                        nb_anticipation   += 1
+                        mat_ids_dans_tranche.add(mat_id)
                         logger.debug(
-                            "  [%s] Principal %s : %d min",
-                            jour_courant, mat_principale_id, duree_p,
+                            "  [%s] ANTICIPATION matin mat=%s (30 min)", jour_courant, mat_id,
                         )
 
-                # ═══════════════════════════════════════════════════════════════
-                # PRIORITÉ 2b — Sessions de découverte (depuis la file entrelacée)
-                # ═══════════════════════════════════════════════════════════════
-                #
-                # On consomme la file round-robin pour remplir le temps restant.
-                # Règles (par ordre de priorité) :
-                #   - Protection pilier : si une matière pilier a déjà eu sa session
-                #     exclusive aujourd'hui, le round-robin ne la reprend PAS.
-                #     Le temps restant est réservé à une matière dynamique différente.
-                #   - Max 2 matières différentes par jour.
-                #     Si la session en tête est une 3ème matière, on tourne la file
-                #     pour trouver une session d'une matière déjà commencée.
-                #   - La dernière session écourtée pour utiliser TOUT le temps restant.
-                #     Exemple : 30 min restantes, session de 60 min → duree_effective = 30 min.
-                #
-                nb_tentatives = 0
+                    # ═══════════════════════════════════════════════════════════
+                    # RÈGLE 3 (matin) — Révisions espacées dans le temps restant
+                    #   Après l'anticipation, le reste de la tranche matin accueille
+                    #   les révisions J+1/J+3/J+7/J+14 dues ce jour.
+                    #   Anti-doublon : matière déjà anticipée → ignorée ici.
+                    # ═══════════════════════════════════════════════════════════
+                    restantes_matin = []
+                    for rev in revisions_non_placees:
+                        rev_mat = rev['matiere_id']
+                        if minutes_restantes < DUREE_MINIMALE_SESSION or rev_mat in mat_ids_dans_tranche:
+                            restantes_matin.append(rev)
+                            continue
+                        sessions_datees.append({
+                            **rev,
+                            'date':            jour_courant,
+                            'tranche_horaire': tranche_obj,
+                            'est_optionnelle': False,
+                            'est_pilier':      False,
+                        })
+                        minutes_restantes -= rev['duree_minutes']
+                        mat_ids_dans_tranche.add(rev_mat)
+                        logger.debug(
+                            "  [%s] REV ESPACEE matin mat=%s (%s)",
+                            jour_courant, rev_mat, rev['type_session'],
+                        )
+                    revisions_non_placees = restantes_matin
 
-                while file_sessions and minutes_restantes >= DUREE_MINIMALE_SESSION:
-
-                    s          = file_sessions[0]
-                    matiere_id = s['matiere_id']
-
-                    # Protection pilier : ne pas re-placer la matière pilier
-                    # après sa session exclusive sur ce jour d'ancrage.
-                    if matiere_id in piliers_places:
-                        nb_tentatives += 1
-                        if nb_tentatives >= len(file_sessions):
+                else:
+                    # ═══════════════════════════════════════════════════════════
+                    # RÈGLE 2 — RÉVISION_IMMÉDIATE (tranche soir, ≥ 14h)
+                    #
+                    #   Ordre  : HCC_PUR > HCC_MIXTE > LECTURE (coefficient ↓).
+                    #   Durées : 120 min (hcc_pur) | 60 min (hcc_mixte) | duree_lecture_minutes (lecture)
+                    #
+                    #   Contraintes :
+                    #     • Max 1 HCC_PUR par tranche (Maths OU Physique, jamais les deux).
+                    #       → Physique reportée à la prochaine séance disponible.
+                    #     • Max 3 matières par tranche (cerveau ≠ entonnoir).
+                    #     • 1 matière = 1 session par tranche (anti-doublon).
+                    #
+                    #   La contrainte "max 1 HCC_PUR" libère 1-2 slots pour les matières
+                    #   secondaires (Philo, Géo, Anglais…) qui sinon disparaissent.
+                    #
+                    #   → Déclenche les révisions J+1/J+3/J+7/J+14 adaptatives.
+                    # ═══════════════════════════════════════════════════════════
+                    nb_matieres       = 0
+                    nb_hcc_pur        = 0   # max 1 HCC_PUR (Maths OU Physique, pas les deux)
+                    for mat_id in matieres_ce_jour_triees:
+                        if nb_matieres >= 3 or minutes_restantes < DUREE_MINIMALE_SESSION:
                             break
-                        file_sessions.rotate(-1)
-                        continue
+                        if mat_id in mat_ids_dans_tranche:
+                            continue
+                        mat = matieres_info.get(mat_id)
+                        if mat and mat.categorie == Matiere.SPORT:
+                            continue
+                        if mat and mat.categorie == Matiere.HCC_PUR and nb_hcc_pur >= 1:
+                            continue   # déjà un HCC_PUR dans cette tranche → Physique attend
+                        duree_rv  = _duree_revimm(mat_id)
+                        if duree_rv == 0:
+                            continue
+                        duree_eff = min(duree_rv, minutes_restantes)
+                        if duree_eff < DUREE_MINIMALE_SESSION:
+                            continue   # trop court → essaie la matière suivante (pas break)
+                        chapitre = chapitres_actifs.get(mat_id)
+                        if not chapitre:
+                            continue
 
-                    # Règle HCC : ne jamais planifier Maths et Physique-Chimie
-                    # le même jour (deux matières à haute charge cognitive).
-                    if matiere_id in matieres_hcc and hcc_du_jour and matiere_id not in hcc_du_jour:
-                        nb_tentatives += 1
-                        if nb_tentatives >= len(file_sessions):
+                        sessions_datees.append({
+                            'chapitre':        chapitre,
+                            'chapitre_id':     chapitre.id,
+                            'matiere_id':      mat_id,
+                            'duree_minutes':   duree_eff,
+                            'type_session':    SessionEtude.REVISION_IMMEDIATE,
+                            'date':            jour_courant,
+                            'tranche_horaire': tranche_obj,
+                            'est_optionnelle': False,
+                            'est_pilier':      False,
+                        })
+                        minutes_restantes -= duree_eff
+                        nb_matieres       += 1
+                        mat_ids_dans_tranche.add(mat_id)
+                        if mat and mat.categorie == Matiere.HCC_PUR:
+                            nb_hcc_pur += 1
+
+                        # Révisions espacées J+n (fenêtre adaptative)
+                        for jours_delai, type_rev in [
+                            (1,  SessionEtude.REVISION_J1),
+                            (3,  SessionEtude.REVISION_J3),
+                            (7,  SessionEtude.REVISION_J7),
+                            (14, SessionEtude.REVISION_J14),
+                        ]:
+                            date_ideale = jour_courant + timedelta(days=jours_delai)
+                            date_rev = self._trouver_meilleure_date_revision(
+                                mat_id, date_ideale,
+                                cours_par_wd, plages_par_wd,
+                                matieres_hcc, date_limite_revisions,
+                            )
+                            if date_rev:
+                                revisions_en_attente.setdefault(date_rev, []).append({
+                                    'chapitre':      chapitre,
+                                    'chapitre_id':   chapitre.id,
+                                    'matiere_id':    mat_id,
+                                    'duree_minutes': DUREE_REVISION_ESPACEE,
+                                    'type_session':  type_rev,
+                                })
+
+                        logger.debug(
+                            "  [%s] REV_IMMEDIATE mat=%s cat=%s %d min",
+                            jour_courant, mat_id,
+                            getattr(mat, 'categorie', '?'), duree_eff,
+                        )
+
+                    # ═══════════════════════════════════════════════════════════
+                    # RÈGLE 3 — RÉVISIONS ESPACÉES dues aujourd'hui (soir)
+                    #   J+1/J+3/J+7/J+14 dans le temps restant de la tranche.
+                    #   Même matière déjà travaillée dans la tranche → demain.
+                    #   Tranche pleine → demain.
+                    # ═══════════════════════════════════════════════════════════
+                    restantes = []
+                    for rev in revisions_non_placees:
+                        rev_mat = rev['matiere_id']
+                        if minutes_restantes < DUREE_MINIMALE_SESSION or rev_mat in mat_ids_dans_tranche:
+                            restantes.append(rev)
+                            continue
+                        sessions_datees.append({
+                            **rev,
+                            'date':            jour_courant,
+                            'tranche_horaire': tranche_obj,
+                            'est_optionnelle': False,
+                            'est_pilier':      False,
+                        })
+                        minutes_restantes -= rev['duree_minutes']
+                        mat_ids_dans_tranche.add(rev_mat)
+                        logger.debug(
+                            "  [%s] REV ESPACEE mat=%s (%s)",
+                            jour_courant, rev_mat, rev['type_session'],
+                        )
+                    revisions_non_placees = restantes
+
+                    # ═══════════════════════════════════════════════════════════
+                    # RÈGLE 1b — ANTICIPATION soir pour les cours de DEMAIN
+                    #   Veille au soir = 2e meilleur moment de priming.
+                    #   Seulement HCC, max 2, si temps restant ET pas déjà travaillée.
+                    # ═══════════════════════════════════════════════════════════
+                    nb_anticipation = 0
+                    for mat_id in hcc_demain:
+                        if nb_anticipation >= 2 or minutes_restantes < 30:
                             break
-                        file_sessions.rotate(-1)
-                        continue
+                        if mat_id in mat_ids_dans_tranche:
+                            continue
+                        chapitre = chapitres_actifs.get(mat_id)
+                        if not chapitre:
+                            continue
+                        sessions_datees.append({
+                            'chapitre':        chapitre,
+                            'chapitre_id':     chapitre.id,
+                            'matiere_id':      mat_id,
+                            'duree_minutes':   30,
+                            'type_session':    SessionEtude.ANTICIPATION,
+                            'date':            jour_courant,
+                            'tranche_horaire': tranche_obj,
+                            'est_optionnelle': False,
+                            'est_pilier':      False,
+                        })
+                        minutes_restantes -= 30
+                        nb_anticipation   += 1
+                        mat_ids_dans_tranche.add(mat_id)
+                        logger.debug(
+                            "  [%s] ANTICIPATION soir (demain) mat=%s (30 min)",
+                            jour_courant, mat_id,
+                        )
 
-                    # Contrainte : max 2 matières différentes par jour
-                    if len(matieres_du_jour) >= 2 and matiere_id not in matieres_du_jour:
-                        nb_tentatives += 1
-                        if nb_tentatives >= len(file_sessions):
-                            # On a parcouru toute la file sans trouver de session
-                            # d'une des 2 matières d'aujourd'hui → arrêter pour ce jour
-                            break
-                        file_sessions.rotate(-1)
-                        continue
+            # Révisions non placées dans aucune tranche → lendemain
+            for rev in revisions_non_placees:
+                self._reporter_revision(
+                    rev, jour_courant, date_limite_revisions, revisions_en_attente
+                )
 
-                    # ── CORRECTION CLÉE : adapter la durée au temps restant ──
-                    # Si la tranche a 30 min et la session dure 60 min,
-                    # on crée une session de 30 min au lieu de sauter.
-                    duree_effective = min(s['duree_minutes'], minutes_restantes)
-                    if duree_effective < DUREE_MINIMALE_SESSION:
-                        break
-
-                    session = file_sessions.popleft()
-                    buffer_tranche.append({
-                        **session,
-                        'date':            jour_courant,
-                        'duree_minutes':   duree_effective,
-                        'tranche_horaire': tranche_obj,
-                    })
-                    matieres_du_jour.add(matiere_id)
-                    minutes_restantes -= duree_effective
-                    nb_tentatives = 0  # Reset : on a bien placé une session
-                    if matiere_id in matieres_hcc:
-                        hcc_du_jour.add(matiere_id)
-
-                    logger.debug(
-                        "  [%s] Découverte %s : %d min (tranche %s)",
-                        jour_courant, matiere_id, duree_effective,
-                        tranche_obj or 'sans tranche',
-                    )
-
-                    # Programmer les révisions espacées pour ce chapitre
-                    for rev in reviseur.creer_revisions(session, jour_courant, date_fin):
-                        revisions_en_attente.setdefault(rev['date'], []).append(rev)
-
-                # Regrouper les sessions de cette tranche par matière avant d'écrire
-                sessions_datees.extend(_grouper_par_matiere(buffer_tranche))
-
-            # Révisions non placées aujourd'hui → reporter au lendemain
-            # + créer une version optionnelle pour aujourd'hui (si l'élève a du temps libre)
-            for rev in revisions_a_placer:
-                self._reporter_revision(rev, jour_courant, date_fin, revisions_en_attente)
-                sessions_datees.append({
-                    **rev,
-                    'date':            jour_courant,
-                    'tranche_horaire': None,
-                    'est_optionnelle': True,
-                })
-
-            matieres_hier = matieres_du_jour
             jour_courant += timedelta(days=1)
 
         logger.info(
-            "  Total sessions planifiées (découverte + révisions) : %d",
+            "  Total sessions planifiees (anticipation + imm. + espacees) : %d",
             len(sessions_datees),
         )
         return sessions_datees
@@ -1244,6 +1137,47 @@ class SessionConstructeur:
         lendemain = date_actuelle + timedelta(days=1)
         if lendemain <= date_fin:
             revisions_en_attente.setdefault(lendemain, []).append(rev)
+
+    def _trouver_meilleure_date_revision(
+        self, matiere_id, date_ideale,
+        cours_par_wd, plages_par_wd,
+        matieres_hcc, date_fin,
+    ):
+        """
+        Fenêtre adaptative [idéal-1j, idéal+2j] pour placer une révision espacée.
+
+        Score (bas = meilleur) :
+          0 — jour avec ce cours au lycée     → renforcement contextuel
+          1 — jour sans matière HCC           → bande passante cognitive dispo
+          2 — jour le plus proche de l'idéal
+
+        Retourne la date choisie, ou None si aucun jour disponible avant date_fin.
+        """
+        if date_ideale > date_fin:
+            return None
+
+        debut = max(date_ideale - timedelta(days=1), date.today())
+        fin   = min(date_ideale + timedelta(days=2), date_fin)
+
+        candidats = []
+        jour = debut
+        while jour <= fin:
+            if plages_par_wd.get(jour.weekday()):
+                cours_du_jour = cours_par_wd.get(jour.weekday(), set())
+                if matiere_id in cours_du_jour:
+                    score = 0
+                elif not (cours_du_jour & matieres_hcc):
+                    score = 1
+                else:
+                    score = 2
+                ecart = abs((jour - date_ideale).days)
+                candidats.append((score, ecart, jour))
+            jour += timedelta(days=1)
+
+        if not candidats:
+            return None
+        candidats.sort()
+        return candidats[0][2]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1268,17 +1202,24 @@ class GenerateurPlan:
         7. Création PlanEtude + SessionEtude en base
     """
 
-    def generer(self, eleve_id):
+    def generer(self, eleve_id, nb_jours=14):
         """
-        Génère (ou régénère) le PlanEtude complet d'un élève.
+        Génère (ou régénère) le PlanEtude d'un élève sur une fenêtre glissante.
+
+        Flux :
+          1. Vérification des prérequis (emploi du temps lycée obligatoire)
+          2. Suppression de l'ancien plan
+          3. Planification fenêtre glissante (3 règles Anticipation/Révision)
+          4. Création PlanEtude + SessionEtude en base (atomic)
+
         Lève ValueError en français si un prérequis est manquant.
         Retourne le PlanEtude créé.
         """
+        from django.db import transaction
+
         logger.info("=== DEBUT GENERATION PLANNING - eleve_id=%s ===", eleve_id)
 
         # ── 1. Vérification des prérequis ─────────────────────────────────────
-        logger.info("Etape 0 : Verification des prerequis")
-
         try:
             eleve = Utilisateur.objects.get(id=eleve_id, role='eleve')
         except Utilisateur.DoesNotExist:
@@ -1295,12 +1236,6 @@ class GenerateurPlan:
                 "Impossible de générer le planning : la date d'examen est déjà passée."
             )
 
-        if not ObjectifMatiere.objects.filter(eleve=eleve).exists():
-            raise ValueError(
-                "Impossible de générer le planning : aucun objectif défini. "
-                "Complète l'étape des objectifs et niveaux de difficulté d'abord."
-            )
-
         try:
             dispo = eleve.disponibilite
         except DisponibiliteEleve.DoesNotExist:
@@ -1314,91 +1249,60 @@ class GenerateurPlan:
                 "Ajoute au moins un créneau de travail dans tes disponibilités."
             )
 
+        if not CoursHebdomadaire.objects.filter(eleve=eleve).exists():
+            raise ValueError(
+                "Impossible de générer le planning : ton emploi du temps lycée est vide. "
+                "Renseigne tes cours hebdomadaires avant de générer le planning."
+            )
+
         logger.info("  Prerequis OK - eleve : %s", eleve)
 
-        # ── 2. Suppression de l'ancien plan ───────────────────────────────────
-        anciens = PlanEtude.objects.filter(eleve=eleve)
-        nb_anciens = anciens.count()
-        if nb_anciens > 0:
-            logger.info("Etape 1 : Suppression de l'ancien plan (%d plan(s))", nb_anciens)
-            anciens.delete()
+        # ── 2. Suppression de l'ancien plan + génération dans une transaction ──
+        constructeur  = SessionConstructeur()
+        date_debut    = date.today()
 
-        # ── 3. Calcul des poids de priorité (V3) ──────────────────────────────
-        calculateur      = CalculateurPoids()
-        poids_par_matiere = calculateur.calculer_poids(eleve)
+        with transaction.atomic():
+            anciens = PlanEtude.objects.filter(eleve=eleve)
+            nb_anciens = anciens.count()
+            if nb_anciens:
+                logger.info("Suppression de l'ancien plan (%d plan(s))", nb_anciens)
+                anciens.delete()
 
-        if not poids_par_matiere:
-            raise ValueError(
-                "Impossible de générer le planning : aucune matière avec niveau de difficulté. "
-                "Complète l'étape des objectifs d'abord."
+            # ── 3. Planification fenêtre glissante ────────────────────────────
+            sessions_datees = constructeur.planifier_calendrier(
+                eleve, nb_jours=nb_jours, date_debut=date_debut,
             )
 
-        # ── 4. Assignation automatique des tranches aux matières ───────────────
-        #
-        # L'algorithme décide seul quelles tranches → quelles matières,
-        # selon les poids et la préférence matin/soir de l'élève.
-        # Cette étape écrit matiere_principale sur chaque TrancheHoraire.
-        #
-        logger.info("Etape 1b : Assignation automatique des tranches")
-        assigner_matieres_aux_tranches(dispo, poids_par_matiere)
+            if not sessions_datees:
+                raise ValueError(
+                    "Impossible de générer le planning : aucune session générée. "
+                    "Vérifie que tes matières ont des chapitres et que ton emploi du temps est complet."
+                )
 
-        # ── 5. Répartition des heures disponibles ─────────────────────────────
-        date_debut   = date.today()
-        total_heures = _calculer_total_heures(dispo, date_debut, eleve.date_examen)
+            # ── 4. Création du PlanEtude + sessions en masse ──────────────────
+            logger.info("Creation du PlanEtude")
+            plan = PlanEtude.objects.create(eleve=eleve, actif=True)
+
+            logger.info("Enregistrement de %d sessions (bulk_create)", len(sessions_datees))
+            SessionEtude.objects.bulk_create([
+                SessionEtude(
+                    plan=plan,
+                    chapitre=s['chapitre'],
+                    date_prevue=s['date'],
+                    duree_minutes=s['duree_minutes'],
+                    type_session=s['type_session'],
+                    tranche_horaire=s.get('tranche_horaire'),
+                    est_optionnelle=s.get('est_optionnelle', False),
+                    est_pilier=s.get('est_pilier', False),
+                )
+                for s in sessions_datees
+            ])
 
         logger.info(
-            "  Periode : %s -> %s  (%.1fh disponibles)",
-            date_debut.strftime('%d/%m/%Y'),
-            eleve.date_examen.strftime('%d/%m/%Y'),
-            total_heures,
-        )
-
-        if total_heures <= 0:
-            raise ValueError(
-                "Impossible de générer le planning : aucune heure de travail disponible "
-                "entre aujourd'hui et la date d'examen. Vérifie tes disponibilités."
-            )
-
-        heures_par_matiere = calculateur.repartir_heures(poids_par_matiere, total_heures)
-
-        # ── 6. Construction des sessions entrelacées ──────────────────────────
-        constructeur        = SessionConstructeur()
-        sessions_non_datees = constructeur.construire_sessions(eleve, heures_par_matiere)
-
-        if not sessions_non_datees:
-            raise ValueError(
-                "Impossible de générer le planning : aucun chapitre à réviser. "
-                "Vérifie que les chapitres des matières sont bien renseignés."
-            )
-
-        # ── 7. Placement dans le calendrier ───────────────────────────────────
-        sessions_datees = constructeur.planifier_calendrier(eleve, sessions_non_datees)
-
-        # ── 8. Création du PlanEtude en base ──────────────────────────────────
-        logger.info("Etape 5 : Creation du PlanEtude")
-        plan = PlanEtude.objects.create(eleve=eleve, actif=True)
-
-        # ── 9. Création en masse des SessionEtude ─────────────────────────────
-        logger.info("Etape 6 : Enregistrement de %d sessions (bulk_create)", len(sessions_datees))
-        SessionEtude.objects.bulk_create([
-            SessionEtude(
-                plan=plan,
-                chapitre=s['chapitre'],
-                date_prevue=s['date'],
-                duree_minutes=s['duree_minutes'],
-                type_session=s['type_session'],
-                tranche_horaire=s.get('tranche_horaire'),
-                est_optionnelle=s.get('est_optionnelle', False),
-                est_pilier=s.get('est_pilier', False),
-            )
-            for s in sessions_datees
-        ])
-
-        logger.info(
-            "=== PLANNING GENERE - %d sessions (%s -> %s) ===",
+            "=== PLANNING GENERE - %d sessions (fenetre %s -> %s) ===",
             len(sessions_datees),
             date_debut.strftime('%d/%m/%Y'),
-            eleve.date_examen.strftime('%d/%m/%Y'),
+            (date_debut + timedelta(days=nb_jours - 1)).strftime('%d/%m/%Y'),
         )
 
         return plan
@@ -1441,6 +1345,7 @@ class GestionnaireImprevu:
     #   revision_j3 (S=14) → délai 3j : 19% de perte | délai 7j : 39% de perte
     #   revision_j14(S=35) → délai 7j : 18% de perte | délai 14j: 33% de perte
     STABILITES = {
+        SessionEtude.ANTICIPATION:       1.0,   # priming avant cours → perd sa valeur dès que le cours a lieu
         SessionEtude.REVISION_IMMEDIATE: 1.0,   # révision dans l'heure → très fragile
         SessionEtude.DECOUVERTE:         2.0,   # 1er contact : volatile mais pas extrême
         SessionEtude.REVISION_J1:        8.0,   # 1er rappel → ancrage initial
