@@ -845,6 +845,44 @@ class SessionConstructeur:
             len(matieres_ids_lycee), len(matieres_hcc), len(chapitres_actifs),
         )
 
+        # ── Budget temps par matière (Levier 1 & 2 & 3) ──────────────────────
+        # poids = difficulté × coeff  (difficulté=2 si pas d'ObjectifMatiere)
+        objectifs_eleve = {
+            o.matiere_id: o.niveau_difficulte
+            for o in ObjectifMatiere.objects.filter(eleve=eleve)
+        }
+        poids_budget: dict = {}
+        for mat_id, mat in matieres_info.items():
+            diff = objectifs_eleve.get(mat_id, 2)  # 2 = moyen par défaut
+            poids_budget[mat_id] = diff * mat.coefficient_minesec
+
+        somme_poids_budget = sum(poids_budget.values()) or 1
+        poids_moyen        = somme_poids_budget / max(len(poids_budget), 1)
+
+        # Seuil de quota week-end : matière secondaire déjà à 70%+ → pas de week-end
+        SEUIL_QUOTA_WEEKEND = 0.70
+
+        # Budget hebdo par matière (en minutes) = proportionnel aux poids
+        minutes_semaine = sum(t.duree_minutes for t in toutes_tranches)
+        budget_hebdo: dict = {
+            mat_id: (p / somme_poids_budget) * minutes_semaine
+            for mat_id, p in poids_budget.items()
+        }
+
+        # Suivi du temps effectivement planifié (incrémenté par _placer_session)
+        temps_planifie: dict = {mat_id: 0 for mat_id in matieres_ids_lycee}
+
+        # Seuil d'alerte : 1.5× le budget d'une journée moyenne → matière prioritaire
+        SEUIL_ALERTE_MINUTES = max(
+            (budget_hebdo.get(mid, 0) / 7.0) * 1.5
+            for mid in matieres_ids_lycee
+        ) if matieres_ids_lycee else 90.0
+
+        logger.info(
+            "  Budget hebdo (min) : %s",
+            {mid: round(v) for mid, v in budget_hebdo.items()},
+        )
+
         # ── Suivi de fréquence pour les matières LECTURE ──────────────────────
         # derniere_session[mat_id] = date de la dernière session planifiée
         derniere_session: dict = {}
@@ -897,8 +935,39 @@ class SessionConstructeur:
                 return 999
             return (aujourd_hui - last).days
 
+        def _deficit(mat_id, aujourd_hui):
+            """
+            Minutes de retard par rapport au budget hebdomadaire cumulé.
+            Retourne 0 si la matière est à jour ou en avance.
+            """
+            jours_ecoules = max(1, (aujourd_hui - date_debut).days + 1)
+            attendu = budget_hebdo.get(mat_id, 0) * (jours_ecoules / 7.0)
+            reel = temps_planifie.get(mat_id, 0)
+            return max(0.0, attendu - reel)
+
+        def _est_en_alerte(mat_id, aujourd_hui):
+            """True si la matière accumule plus de 1.5 journée de retard sur son budget."""
+            return _deficit(mat_id, aujourd_hui) >= SEUIL_ALERTE_MINUTES
+
+        def _taux_realisation(mat_id):
+            """Proportion du budget hebdomadaire déjà planifiée (0.0 → 1.0+)."""
+            budget = budget_hebdo.get(mat_id, 0)
+            if budget == 0:
+                return 1.0
+            return temps_planifie.get(mat_id, 0) / budget
+
+        def _est_matiere_base(mat_id):
+            """
+            Matière de base = HCC_PUR, ou poids >= moyenne des poids.
+            Les matières secondaires (LECTURE à faible poids) libèrent le week-end
+            dès qu'elles atteignent 70% de leur quota hebdomadaire.
+            """
+            if _categorie(mat_id) == Matiere.HCC_PUR:
+                return True
+            return poids_budget.get(mat_id, 0) >= poids_moyen
+
         def _placer_session(mat_id, duree, type_session, tranche_obj, jour):
-            """Ajoute un dict session dans sessions_datees."""
+            """Ajoute un dict session dans sessions_datees et met à jour temps_planifie."""
             chapitre = chapitres_actifs.get(mat_id)
             if not chapitre:
                 return False
@@ -913,6 +982,7 @@ class SessionConstructeur:
                 'est_optionnelle': False,
                 'est_pilier':      False,
             })
+            temps_planifie[mat_id] = temps_planifie.get(mat_id, 0) + duree
             return True
 
         def _planifier_revisions_espacees(mat_id, chapitre, jour_decouverte):
@@ -961,42 +1031,70 @@ class SessionConstructeur:
                 continue
 
             cours_ce_jour = cours_par_wd.get(wd_courant, set())
+            est_weekend = not cours_ce_jour  # samedi/dimanche : emploi du temps vide
 
-            # Classifier les matières du jour par catégorie (SPORT ignoré)
-            hcc_pur_du_jour = sorted(
-                [m for m in cours_ce_jour if _categorie(m) == Matiere.HCC_PUR],
-                key=lambda m: -_jours_sans_forte(m, jour_courant),  # le plus urgent en premier
-            )
-            hcc_mixte_du_jour = sorted(
-                [m for m in cours_ce_jour if _categorie(m) == Matiere.HCC_MIXTE],
-                key=lambda m: -_coeff(m),
-            )
-            lecture_du_jour = sorted(
-                [m for m in cours_ce_jour if _categorie(m) == Matiere.LECTURE],
-                key=lambda m: -_coeff(m),
-            )
+            if est_weekend:
+                # ── WEEK-END : piloter par le déficit — matières de base prioritaires ──
+                # (Levier 2 — weekends intelligents + règle quota 70%)
+                hcc_pur_du_jour = sorted(
+                    [m for m in matieres_ids_lycee if _categorie(m) == Matiere.HCC_PUR],
+                    key=lambda m: (-_deficit(m, jour_courant), -_jours_sans_forte(m, jour_courant)),
+                )
+                hcc_mixte_du_jour = sorted(
+                    [m for m in matieres_ids_lycee if _categorie(m) == Matiere.HCC_MIXTE],
+                    key=lambda m: -_deficit(m, jour_courant),
+                )
+                # Matières LECTURE secondaires (poids < moyenne) exclues si quota ≥ 70%.
+                # Matières de base (LECTURE à haut poids, ex: Philo Tle A4) : toujours incluses.
+                # Tri : base en premier, puis secondaires par déficit décroissant.
+                lecture_du_jour = sorted(
+                    [
+                        m for m in matieres_ids_lycee
+                        if _categorie(m) == Matiere.LECTURE
+                        and (_est_matiere_base(m) or _taux_realisation(m) < SEUIL_QUOTA_WEEKEND)
+                    ],
+                    key=lambda m: (-int(_est_matiere_base(m)), -_deficit(m, jour_courant)),
+                )
+                lecture_urgentes_hors  = []   # déjà tout dans les listes ci-dessus
+                hcc_mixte_candidats_bouche = []  # idem
+            else:
+                # ── JOUR DE SEMAINE : emploi du temps lycée + déficit comme tie-breaker ──
+                # (Levier 1 — déficit comme critère de tri)
+                hcc_pur_du_jour = sorted(
+                    [m for m in cours_ce_jour if _categorie(m) == Matiere.HCC_PUR],
+                    key=lambda m: (-_jours_sans_forte(m, jour_courant), -_deficit(m, jour_courant)),
+                )
+                hcc_mixte_du_jour = sorted(
+                    [m for m in cours_ce_jour if _categorie(m) == Matiere.HCC_MIXTE],
+                    key=lambda m: -_deficit(m, jour_courant),
+                )
+                lecture_du_jour = sorted(
+                    [m for m in cours_ce_jour if _categorie(m) == Matiere.LECTURE],
+                    key=lambda m: -_deficit(m, jour_courant),
+                )
 
-            # Matières LECTURE urgentes hors programme du jour
-            lecture_urgentes_hors = sorted(
-                [
-                    m for m in matieres_ids_lycee
-                    if _categorie(m) == Matiere.LECTURE
-                    and m not in cours_ce_jour
-                    and _lecture_urgente(m, jour_courant)
-                ],
-                key=lambda m: -_coeff(m),
-            )
+                # Matières LECTURE urgentes hors programme du jour (tri par déficit)
+                lecture_urgentes_hors = sorted(
+                    [
+                        m for m in matieres_ids_lycee
+                        if _categorie(m) == Matiere.LECTURE
+                        and m not in cours_ce_jour
+                        and _lecture_urgente(m, jour_courant)
+                    ],
+                    key=lambda m: -_deficit(m, jour_courant),
+                )
 
-            # Matières HCC_MIXTE candidates pour le bouche-trou
-            hcc_mixte_candidats_bouche = sorted(
-                [
-                    m for m in matieres_ids_lycee
-                    if _categorie(m) == Matiere.HCC_MIXTE
-                    and m not in cours_ce_jour
-                    and m not in bouche_trous_recents
-                ],
-                key=lambda m: -_coeff(m),
-            )
+                # Matières HCC_MIXTE candidates pour le bouche-trou (Levier 3 :
+                # une matière en alerte peut contourner l'anti-répétition de 2 jours)
+                hcc_mixte_candidats_bouche = sorted(
+                    [
+                        m for m in matieres_ids_lycee
+                        if _categorie(m) == Matiere.HCC_MIXTE
+                        and m not in cours_ce_jour
+                        and (m not in bouche_trous_recents or _est_en_alerte(m, jour_courant))
+                    ],
+                    key=lambda m: -_deficit(m, jour_courant),
+                )
 
             # ── Répartition forte / légère selon présence HCC_PUR ────────────────
             # Quand HCC_PUR est au programme : HCC_MIXTE reste en légère (preview
