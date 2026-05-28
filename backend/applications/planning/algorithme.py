@@ -1029,6 +1029,109 @@ class SessionConstructeur:
                         'type_session':  type_rev,
                     })
 
+        # ── Helper : Étape 5 — remplissage du temps libre dans une tranche ──────
+        # Utilisé quand peu de matières sont actives et qu'il reste des minutes
+        # inexploitées après les étapes 1-4. Distribue pro-rata du poids et
+        # donne le résidu de l'arrondi au candidat le plus prioritaire.
+        def _remplir_temps_libre(
+            minutes_dispo: int,
+            tranche_obj,
+            mat_ids_tranche: set,
+            est_forte_: bool,
+            cours_du_jour: set,
+            est_weekend_: bool,
+            jour: date,
+        ) -> int:
+            """Retourne les minutes restantes après distribution (normalement 0)."""
+            if minutes_dispo < DUREE_MINIMALE_SESSION:
+                return minutes_dispo
+
+            # 1. Matières déjà placées dans cette tranche (en tête)
+            candidats = sorted(
+                [m for m in mat_ids_tranche if chapitres_actifs.get(m)],
+                key=lambda m: -_deficit(m, jour),
+            )
+            # 2. Sinon : matières du jour (semaine) ou toutes matières (week-end).
+            # On EXCLUT les matières déjà planifiées dans d'autres tranches ce jour
+            # → empêche les littéraires d'avoir Philo en légère ET en forte.
+            if not candidats:
+                _mat_deja_aujourd_hui = {
+                    s['matiere_id'] for s in sessions_datees if s['date'] == jour
+                }
+                src = cours_du_jour if not est_weekend_ else matieres_ids_lycee
+                candidats = sorted(
+                    [m for m in src
+                     if chapitres_actifs.get(m) and m not in _mat_deja_aujourd_hui],
+                    key=lambda m: -_deficit(m, jour),
+                )
+            if not candidats:
+                return minutes_dispo
+
+            type_fill = (
+                SessionEtude.REVISION_IMMEDIATE if est_forte_ else SessionEtude.ANTICIPATION
+            )
+            sp = sum(poids_budget.get(m, 1) for m in candidats) or 1
+
+            # Passe 1 : allocation proportionnelle aux poids
+            allocs = {
+                m: int(minutes_dispo * poids_budget.get(m, 1) / sp)
+                for m in candidats
+            }
+            # Le résidu de l'arrondi va au candidat de tête (plus grand déficit)
+            allocs[candidats[0]] += minutes_dispo - sum(allocs.values())
+
+            remaining = minutes_dispo
+            for m in candidats:
+                a = allocs.get(m, 0)
+                if a < DUREE_MINIMALE_SESSION or remaining < DUREE_MINIMALE_SESSION:
+                    continue
+                a = min(a, remaining)
+                # Étendre session existante dans cette tranche, ou en créer une
+                s = next(
+                    (x for x in reversed(sessions_datees)
+                     if x['date'] == jour
+                     and x['tranche_horaire'] is tranche_obj
+                     and x['matiere_id'] == m),
+                    None,
+                )
+                if s:
+                    s['duree_minutes'] += a
+                    temps_planifie[m] = temps_planifie.get(m, 0) + a
+                else:
+                    if not _placer_session(m, a, type_fill, tranche_obj, jour):
+                        continue
+                    mat_ids_tranche.add(m)
+                remaining -= a
+                derniere_session[m] = jour
+                logger.debug(
+                    "  [%s] REMPLISSAGE %s mat=%s +%d min",
+                    jour, "forte" if est_forte_ else "légère", m, a,
+                )
+
+            # Passe 2 : résidu non distribué (parts inférieures au minimum)
+            # → revient entièrement au candidat de tête qui a déjà une session
+            if remaining >= DUREE_MINIMALE_SESSION:
+                for m in candidats:
+                    s = next(
+                        (x for x in reversed(sessions_datees)
+                         if x['date'] == jour
+                         and x['tranche_horaire'] is tranche_obj
+                         and x['matiere_id'] == m),
+                        None,
+                    )
+                    if s:
+                        s['duree_minutes'] += remaining
+                        temps_planifie[m] = temps_planifie.get(m, 0) + remaining
+                        derniere_session[m] = jour
+                        logger.debug(
+                            "  [%s] REMPLISSAGE résidu %s mat=%s +%d min",
+                            jour, "forte" if est_forte_ else "légère", m, remaining,
+                        )
+                        remaining = 0
+                        break
+
+            return remaining
+
         sessions_datees: list       = []
         revisions_en_attente: dict  = {}
 
@@ -1252,10 +1355,20 @@ class SessionConstructeur:
                             break  # 1 seul bouche-trou par tranche
 
                     # ── Étape 4 : Révisions espacées dans le temps restant ────
+                    # RÈGLE anti-surcharge HCC : si la tranche forte contient déjà
+                    # un HCC_PUR (révision intensive), on refuse d'y placer la révision
+                    # espacée d'un AUTRE HCC_PUR. Elle sera reportée au lendemain.
+                    _hcc_pur_en_forte = any(
+                        _categorie(m) == Matiere.HCC_PUR for m in mat_ids_dans_tranche
+                    )
                     restantes = []
                     for rev in revisions_non_placees:
                         rev_mat = rev['matiere_id']
                         if minutes_restantes < DUREE_MINIMALE_SESSION or rev_mat in mat_ids_dans_tranche:
+                            restantes.append(rev)
+                            continue
+                        # Bloquer un 2e HCC_PUR dans la même tranche forte
+                        if _hcc_pur_en_forte and _categorie(rev_mat) == Matiere.HCC_PUR:
                             restantes.append(rev)
                             continue
                         sessions_datees.append({
@@ -1272,6 +1385,12 @@ class SessionConstructeur:
                             jour_courant, rev_mat, rev['type_session'],
                         )
                     revisions_non_placees = restantes
+
+                    # ── Étape 5 : Remplissage du temps libre (peu de matières) ──
+                    minutes_restantes = _remplir_temps_libre(
+                        minutes_restantes, tranche_obj, mat_ids_dans_tranche, True,
+                        cours_ce_jour, est_weekend, jour_courant,
+                    )
 
                 else:
                     # ══════════════════════════════════════════════════════════
@@ -1370,10 +1489,19 @@ class SessionConstructeur:
                                     )
                                     break
 
-                        # Si pas d'extension possible : séance légère du meilleur HCC du jour
+                        # Si pas d'extension possible : séance légère du meilleur HCC du jour.
+                        # RÈGLE : les HCC_PUR sont réservés à la tranche forte.
+                        # On ne les place en légère que si aucune tranche forte n'existe ce jour
+                        # (évite d'avoir Maths en légère ET Physique en forte le même jour).
                         if not etendu and minutes_restantes >= DUREE_MINIMALE_SESSION:
+                            _a_forte_auj = any(_est_tranche_forte(t) for _, t in plages_du_jour)
+                            _src_hcc_leg = (
+                                hcc_mixte_du_jour
+                                if _a_forte_auj and hcc_pur_du_jour
+                                else hcc_pur_du_jour + hcc_mixte_du_jour
+                            )
                             candidats_hcc = [
-                                m for m in (hcc_pur_du_jour + hcc_mixte_du_jour)
+                                m for m in _src_hcc_leg
                                 if m not in mat_ids_dans_tranche
                                 and chapitres_actifs.get(m)
                             ]
@@ -1413,6 +1541,12 @@ class SessionConstructeur:
                             jour_courant, rev_mat, rev['type_session'],
                         )
                     revisions_non_placees = restantes_legere
+
+                    # ── Étape 5 : Remplissage du temps libre (peu de matières) ──
+                    minutes_restantes = _remplir_temps_libre(
+                        minutes_restantes, tranche_obj, mat_ids_dans_tranche, False,
+                        cours_ce_jour, est_weekend, jour_courant,
+                    )
 
             # Révisions non placées dans aucune tranche → lendemain
             for rev in revisions_non_placees:
