@@ -8,6 +8,7 @@ import 'ecrans/auth/ecran_verification.dart';
 import 'ecrans/disponibilite/ecran_disponibilite.dart';
 import 'ecrans/planning/ecran_calibration_inscription.dart';
 import 'ecrans/planning/ecran_emploi_du_temps.dart';
+import 'ecrans/planning/ecran_matieres_planning.dart';
 import 'ecrans/planning/ecran_objectifs.dart';
 import 'ecrans/planning/ecran_planning_jour.dart';
 import 'ecrans/analytique/ecran_analytique.dart';
@@ -62,6 +63,7 @@ class NESJAcademyApp extends StatelessWidget {
           // ── Écrans individuels (accessibles via la navigation principale) ─
           Routes.planningJour:        (_) => const EcranPlanningJour(),
           Routes.analytique:          (_) => const EcranAnalytique(),
+          Routes.matieresPlan:        (_) => const EcranMatieresPlan(),
         },
       ),
     );

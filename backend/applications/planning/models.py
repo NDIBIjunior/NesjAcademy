@@ -352,6 +352,10 @@ class ObjectifMatiere(models.Model):
         default=2,
         help_text="Difficulté ressentie (1=facile, 3=difficile) — sert à calculer le poids de la matière",
     )
+    inclus_dans_planning = models.BooleanField(
+        default=True,
+        help_text="Si False, cette matière est exclue de la génération du planning",
+    )
 
     class Meta:
         verbose_name = "Objectif Matière"

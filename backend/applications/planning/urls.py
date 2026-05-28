@@ -16,6 +16,7 @@ from .views import (
     VueReporterSession,
     VueResumePlan,
     VueSeancesRetard,
+    VueToggleMatieresPlan,
 )
 
 urlpatterns = [
@@ -23,7 +24,8 @@ urlpatterns = [
     path("matieres/",         VueMatieres.as_view(),         name="planning-matieres"),
 
     # Objectifs, disponibilités et emploi du temps (collecte avant génération)
-    path("objectifs/",        VueObjectifsEleve.as_view(),   name="planning-objectifs"),
+    path("objectifs/",                          VueObjectifsEleve.as_view(),     name="planning-objectifs"),
+    path("objectifs/<int:pk>/planning/",        VueToggleMatieresPlan.as_view(), name="planning-objectif-toggle"),
     path("disponibilite/",    VueDisponibilite.as_view(),    name="planning-disponibilite"),
     path("emploi-du-temps/",  VueEmploiDuTemps.as_view(),   name="planning-emploi-du-temps"),
 

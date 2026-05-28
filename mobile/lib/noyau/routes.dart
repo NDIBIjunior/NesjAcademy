@@ -33,4 +33,7 @@ abstract class Routes {
 
   // Profil
   static const String profil            = '/profil';
+
+  // Gestion des matières incluses dans le planning
+  static const String matieresPlan      = '/matieres-planning';
 }

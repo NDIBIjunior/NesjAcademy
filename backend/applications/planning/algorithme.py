@@ -815,6 +815,27 @@ class SessionConstructeur:
                 "Renseigne ton emploi du temps avant de générer le planning."
             )
 
+        # ── Filtre : exclure les matières désactivées par l'élève ────────────
+        matieres_exclues: set = {
+            o.matiere_id
+            for o in ObjectifMatiere.objects.filter(
+                eleve=eleve,
+                matiere_id__in=matieres_ids_lycee,
+                inclus_dans_planning=False,
+            )
+        }
+        matieres_ids_lycee -= matieres_exclues
+        if matieres_exclues:
+            logger.info(
+                "  Matières exclues du planning par l'élève : %s", matieres_exclues,
+            )
+
+        if not matieres_ids_lycee:
+            raise ValueError(
+                "Tu as désactivé toutes tes matières. "
+                "Active au moins une matière pour générer le planning."
+            )
+
         # ── Infos matières ────────────────────────────────────────────────────
         matieres_info: dict = {
             m.id: m for m in Matiere.objects.filter(id__in=matieres_ids_lycee)

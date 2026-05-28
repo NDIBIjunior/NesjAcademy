@@ -185,10 +185,11 @@ class VueObjectifsEleve(APIView):
         for matiere in matieres:
             obj = objectifs.get(matiere.pk)
             donnees.append({
-                "matiere":            MatiereResumeSerializer(matiere).data,
-                "note_cible":         float(obj.note_cible) if obj else None,
-                "niveau_difficulte":  obj.niveau_difficulte if obj else None,
-                "objectif_id":        obj.pk if obj else None,
+                "matiere":               MatiereResumeSerializer(matiere).data,
+                "note_cible":            float(obj.note_cible) if obj else None,
+                "niveau_difficulte":     obj.niveau_difficulte if obj else None,
+                "objectif_id":          obj.pk if obj else None,
+                "inclus_dans_planning": obj.inclus_dans_planning if obj else True,
             })
 
         return Response(donnees)
@@ -241,8 +242,9 @@ class VueObjectifsEleve(APIView):
                 eleve=eleve,
                 matiere=matiere,
                 defaults={
-                    "note_cible":        item["note_cible"],
-                    "niveau_difficulte": item["niveau_difficulte"],
+                    "note_cible":           item["note_cible"],
+                    "niveau_difficulte":    item["niveau_difficulte"],
+                    "inclus_dans_planning": item.get("inclus_dans_planning", True),
                 },
             )
             obj.matiere = matiere
@@ -252,6 +254,61 @@ class VueObjectifsEleve(APIView):
             ObjectifMatiereSerializer(sauvegardes, many=True).data,
             status=status.HTTP_200_OK,
         )
+
+
+class VueToggleMatieresPlan(APIView):
+    """
+    PATCH /api/planning/objectifs/<id>/planning/
+
+    Active ou désactive une matière dans la génération du planning.
+    Retourne le nouvel état + un avertissement si la matière est importante.
+
+    Corps attendu : { "inclus": true | false }
+    Réponse       : { "inclus_dans_planning": bool, "avertissement": str | null }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            obj = ObjectifMatiere.objects.select_related('matiere').get(
+                pk=pk, eleve=request.user,
+            )
+        except ObjectifMatiere.DoesNotExist:
+            return Response(
+                {"erreur": "Objectif introuvable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        inclus = request.data.get("inclus")
+        if inclus is None:
+            return Response(
+                {"erreur": "Le champ 'inclus' (true/false) est requis."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        obj.inclus_dans_planning = bool(inclus)
+        obj.save(update_fields=["inclus_dans_planning"])
+
+        avertissement = None
+        if not obj.inclus_dans_planning:
+            mat = obj.matiere
+            if obj.niveau_difficulte >= 3 and mat.coefficient_minesec >= 5:
+                avertissement = (
+                    f"Tu as signalé être en difficulté en {mat.nom} "
+                    f"(coeff. {mat.coefficient_minesec}). "
+                    "On recommande de l'inclure dans ton planning pour ne pas prendre de retard."
+                )
+            elif obj.niveau_difficulte >= 3:
+                avertissement = (
+                    f"Tu as signalé être en difficulté en {mat.nom}. "
+                    "Pense à réviser cette matière par tes propres moyens."
+                )
+
+        return Response({
+            "inclus_dans_planning": obj.inclus_dans_planning,
+            "avertissement":        avertissement,
+        })
 
 
 class VueDisponibilite(APIView):

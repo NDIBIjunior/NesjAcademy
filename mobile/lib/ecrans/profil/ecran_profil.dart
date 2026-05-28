@@ -196,6 +196,27 @@ class _EcranProfilState extends State<EcranProfil> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+              child: OutlinedButton.icon(
+                onPressed: () =>
+                    Navigator.pushNamed(context, Routes.matieresPlan),
+                icon: const Icon(Icons.checklist_rounded,
+                    color: CouleurApp.bleuPrincipal),
+                label: const Text(
+                  'Choisir mes matières au planning',
+                  style: TextStyle(color: CouleurApp.bleuPrincipal),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: CouleurApp.bleuPrincipal),
+                  minimumSize: const Size(double.infinity, 52),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: ElevatedButton.icon(
                 onPressed: _regenerationEnCours ? null : _regenererPlanning,
                 icon: _regenerationEnCours

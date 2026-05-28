@@ -20,9 +20,10 @@ class ItemObjectifSerializer(serializers.Serializer):
     Corps attendu : { "matiere_id": 3, "note_cible": 14.0, "niveau_difficulte": 2 }
     """
 
-    matiere_id         = serializers.PrimaryKeyRelatedField(queryset=Matiere.objects.all())
-    note_cible         = serializers.DecimalField(max_digits=4, decimal_places=1)
-    niveau_difficulte  = serializers.IntegerField(min_value=1, max_value=3, default=2)
+    matiere_id            = serializers.PrimaryKeyRelatedField(queryset=Matiere.objects.all())
+    note_cible            = serializers.DecimalField(max_digits=4, decimal_places=1)
+    niveau_difficulte     = serializers.IntegerField(min_value=1, max_value=3, default=2)
+    inclus_dans_planning  = serializers.BooleanField(default=True, required=False)
 
     def validate_note_cible(self, valeur):
         if valeur < Decimal("10") or valeur > Decimal("20"):
@@ -39,7 +40,7 @@ class ObjectifMatiereSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ObjectifMatiere
-        fields = ["id", "matiere", "note_cible", "niveau_difficulte"]
+        fields = ["id", "matiere", "note_cible", "niveau_difficulte", "inclus_dans_planning"]
 
 
 class TrancheHoraireSerializer(serializers.ModelSerializer):

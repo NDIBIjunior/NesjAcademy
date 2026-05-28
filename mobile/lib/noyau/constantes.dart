@@ -35,6 +35,11 @@ abstract class Constantes {
   static const String urlSeancesRetard     = '$_base/planning/retard/';
   static const String urlPositionProgramme = '$_base/planning/position-programme/';
 
+  // Toggle inclusion d'un objectif dans le planning (PATCH)
+  // Usage : '${Constantes.urlTogglePlanning(id)}'
+  static String urlTogglePlanning(int objectifId) =>
+      '$_base/planning/objectifs/$objectifId/planning/';
+
   // Imprévus — helpers pour construire les URLs d'action sur session
   // Usage : '${Constantes.urlSessions}$id/reporter/'
   //         '${Constantes.urlSessions}$id/completer/'

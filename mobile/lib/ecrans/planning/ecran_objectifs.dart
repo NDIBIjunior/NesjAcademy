@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../../composants/dialog_confirmation_desactivation.dart';
 import '../../composants/guide_professeur.dart';
 import '../../donnees/local/stockage_local.dart';
 import '../../noyau/constantes.dart';
@@ -58,6 +59,9 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
   // Difficulté par matiere_id (1 = facile, 2 = moyen, 3 = difficile)
   final Map<int, int> _difficultes = {};
 
+  // Inclusion dans le planning par matiere_id (true = inclus par défaut)
+  final Map<int, bool> _inclus = {};
+
   @override
   void initState() {
     super.initState();
@@ -83,6 +87,7 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
             ? double.parse(item['note_cible'].toString()) : 14.0;
         difficultes[id] = item['niveau_difficulte'] != null
             ? (item['niveau_difficulte'] as num).toInt() : 2;
+        _inclus[id]     = item['inclus_dans_planning'] as bool? ?? true;
       }
 
       setState(() {
@@ -124,9 +129,10 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
       final payload = _matieres.map((item) {
         final id = (item['matiere'] as Map<String, dynamic>)['id'] as int;
         return {
-          'matiere_id':        id,
-          'note_cible':        _notes[id] ?? _noteGlobale,
-          'niveau_difficulte': _difficultes[id] ?? 2,
+          'matiere_id':           id,
+          'note_cible':           _notes[id] ?? _noteGlobale,
+          'niveau_difficulte':    _difficultes[id] ?? 2,
+          'inclus_dans_planning': _inclus[id] ?? true,
         };
       }).toList();
 
@@ -209,6 +215,7 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
           GuideProfesseur(
             message: 'Pour chaque matière, dis-moi quelle note tu vises '
                 'et à quel point tu la trouves difficile. '
+                'Tu peux aussi exclure une matière du planning en désactivant son interrupteur. '
                 'Je calculerai exactement le temps qu\'il te faut !',
             vitesseEcriture: const Duration(milliseconds: 30),
           ),
@@ -250,13 +257,25 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
             final id    = matiere['id'] as int;
             final nom   = matiere['nom'] as String;
             final coeff = matiere['coefficient_minesec'] as int;
+            final diff  = _difficultes[id] ?? 2;
             return _CarteObjectifMatiere(
-              nom:           nom,
-              coefficient:   coeff,
-              note:          _notes[id] ?? _noteGlobale,
-              difficulte:    _difficultes[id] ?? 2,
-              onNoteChanged: (v) => setState(() => _notes[id] = v),
+              nom:                 nom,
+              coefficient:         coeff,
+              note:                _notes[id] ?? _noteGlobale,
+              difficulte:          diff,
+              inclus:              _inclus[id] ?? true,
+              onNoteChanged:       (v) => setState(() => _notes[id] = v),
               onDifficulteChanged: (v) => setState(() => _difficultes[id] = v),
+              onInclusChanged: (v) async {
+                // Confirmation requise si on désactive une matière importante
+                if (!v && estMatiereImportante(coefficient: coeff, difficulte: diff)) {
+                  final confirme = await confirmerDesactivationMatiere(
+                    context, nomMatiere: nom,
+                  );
+                  if (!confirme) return;
+                }
+                setState(() => _inclus[id] = v);
+              },
             );
           }),
 
@@ -266,9 +285,9 @@ class _EcranObjectifsState extends State<EcranObjectifs> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: CouleurApp.erreur.withOpacity(0.08),
+                color: CouleurApp.erreur.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: CouleurApp.erreur.withOpacity(0.3)),
+                border: Border.all(color: CouleurApp.erreur.withValues(alpha: 0.3)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,7 +360,8 @@ class _CarteLegendeDifficulte extends StatelessWidget {
           const SizedBox(height: 8),
           const Text(
             'L\'algorithme utilisera cette information pour calculer '
-            'le temps optimal à allouer à chaque matière.',
+            'le temps optimal à allouer à chaque matière. '
+            'Active ou désactive une matière avec son interrupteur.',
             style: TextStyle(color: CouleurApp.texteGris, fontSize: 12, height: 1.4),
           ),
           const SizedBox(height: 10),
@@ -393,9 +413,9 @@ class _PuceDifficulte extends StatelessWidget {
       padding: EdgeInsets.symmetric(
           horizontal: compact ? 8 : 12, vertical: compact ? 4 : 5),
       decoration: BoxDecoration(
-        color: c.withOpacity(0.10),
+        color: c.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: c.withOpacity(0.3)),
+        border: Border.all(color: c.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -449,10 +469,10 @@ class _CarteNoteGlobale extends StatelessWidget {
       decoration: BoxDecoration(
         color: CouleurApp.fondBlanc,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: CouleurApp.bleuPrincipal.withOpacity(0.3)),
+        border: Border.all(color: CouleurApp.bleuPrincipal.withValues(alpha: 0.3)),
         boxShadow: [
           BoxShadow(
-            color: CouleurApp.bleuPrincipal.withOpacity(0.08),
+            color: CouleurApp.bleuPrincipal.withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -493,7 +513,7 @@ class _CarteNoteGlobale extends StatelessWidget {
                   ' / 20',
                   style: TextStyle(
                     fontSize: 20,
-                    color: _couleur.withOpacity(0.7),
+                    color: _couleur.withValues(alpha: 0.7),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -505,7 +525,7 @@ class _CarteNoteGlobale extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
               decoration: BoxDecoration(
-                color: _couleur.withOpacity(0.10),
+                color: _couleur.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
@@ -525,7 +545,7 @@ class _CarteNoteGlobale extends StatelessWidget {
               activeTrackColor: _couleur,
               thumbColor: _couleur,
               inactiveTrackColor: CouleurApp.bordure,
-              overlayColor: _couleur.withOpacity(0.12),
+              overlayColor: _couleur.withValues(alpha: 0.12),
               trackHeight: 6,
             ),
             child: Slider(
@@ -554,23 +574,27 @@ class _CarteNoteGlobale extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Carte : objectif + difficulté pour une matière
+// Carte : objectif + difficulté + inclusion pour une matière
 // ─────────────────────────────────────────────────────────────────────────────
 class _CarteObjectifMatiere extends StatelessWidget {
   final String   nom;
   final int      coefficient;
   final double   note;
-  final int      difficulte;       // 1, 2 ou 3
+  final int      difficulte;
+  final bool     inclus;
   final ValueChanged<double> onNoteChanged;
   final ValueChanged<int>    onDifficulteChanged;
+  final ValueChanged<bool>   onInclusChanged;
 
   const _CarteObjectifMatiere({
     required this.nom,
     required this.coefficient,
     required this.note,
     required this.difficulte,
+    required this.inclus,
     required this.onNoteChanged,
     required this.onDifficulteChanged,
+    required this.onInclusChanged,
   });
 
   Color get _couleurNote {
@@ -588,127 +612,169 @@ class _CarteObjectifMatiere extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(
-        color: CouleurApp.fondBlanc,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: CouleurApp.bordure),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── En-tête : nom + coeff + note ──────────────────────────────────
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      nom,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: CouleurApp.bleuSombre,
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 200),
+      opacity: inclus ? 1.0 : 0.5,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: BoxDecoration(
+          color: CouleurApp.fondBlanc,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: inclus
+                ? CouleurApp.bordure
+                : CouleurApp.bordure.withValues(alpha: 0.4),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+
+            // ── En-tête : nom + coeff + switch + note/badge ────────────────
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        nom,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: inclus
+                              ? CouleurApp.bleuSombre
+                              : CouleurApp.texteGris,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Coefficient $coefficient',
-                      style: const TextStyle(
-                          color: CouleurApp.texteGris, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              // Note à droite
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _couleurNote.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '${note.toInt()} / 20',
-                  style: TextStyle(
-                    color: _couleurNote,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+                      Text(
+                        'Coefficient $coefficient',
+                        style: const TextStyle(
+                            color: CouleurApp.texteGris, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ],
-          ),
 
-          // ── Curseur note ──────────────────────────────────────────────────
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: _couleurNote,
-              thumbColor: _couleurNote,
-              inactiveTrackColor: CouleurApp.bordure,
-              overlayColor: _couleurNote.withOpacity(0.12),
-              trackHeight: 5,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
-            ),
-            child: Slider(
-              value: note,
-              min: 10,
-              max: 20,
-              divisions: 10,
-              onChanged: onNoteChanged,
-            ),
-          ),
-
-          // ── Séparateur ────────────────────────────────────────────────────
-          const Divider(height: 16, color: CouleurApp.bordure),
-
-          // ── Sélecteur de difficulté ───────────────────────────────────────
-          const Text(
-            'DIFFICULTÉ RESSENTIE',
-            style: TextStyle(
-              color: CouleurApp.texteGris,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [1, 2, 3].map((niveau) {
-              final estSelectionne = difficulte == niveau;
-              final c = _couleursDiff[niveau]!;
-              const labels  = {1: '😊 Facile', 2: '😐 Moyen', 3: '😰 Difficile'};
-              return Expanded(
-                child: GestureDetector(
-                  onTap: () => onDifficulteChanged(niveau),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    margin: EdgeInsets.only(right: niveau < 3 ? 8 : 0),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                // Badge note OU "Exclue"
+                if (inclus)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: estSelectionne ? c : c.withOpacity(0.07),
+                      color: _couleurNote.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: estSelectionne ? c : c.withOpacity(0.3),
-                        width: estSelectionne ? 2 : 1,
-                      ),
                     ),
                     child: Text(
-                      labels[niveau]!,
-                      textAlign: TextAlign.center,
+                      '${note.toInt()} / 20',
                       style: TextStyle(
-                        color: estSelectionne ? Colors.white : c,
+                        color: _couleurNote,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: CouleurApp.texteGris.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      'Exclue',
+                      style: TextStyle(
+                        color: CouleurApp.texteGris,
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
                     ),
                   ),
+
+                const SizedBox(width: 4),
+
+                // Switch inclus/exclu
+                Switch(
+                  value:              inclus,
+                  onChanged:          onInclusChanged,
+                  activeThumbColor:   CouleurApp.bleuPrincipal,
+                  inactiveThumbColor: CouleurApp.texteGris,
                 ),
-              );
-            }).toList(),
-          ),
-        ],
+              ],
+            ),
+
+            // Curseur et difficulté masqués si matière exclue
+            if (inclus) ...[
+              // ── Curseur note ──────────────────────────────────────────────
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: _couleurNote,
+                  thumbColor: _couleurNote,
+                  inactiveTrackColor: CouleurApp.bordure,
+                  overlayColor: _couleurNote.withValues(alpha: 0.12),
+                  trackHeight: 5,
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+                ),
+                child: Slider(
+                  value: note,
+                  min: 10,
+                  max: 20,
+                  divisions: 10,
+                  onChanged: onNoteChanged,
+                ),
+              ),
+
+              // ── Séparateur ────────────────────────────────────────────────
+              const Divider(height: 16, color: CouleurApp.bordure),
+
+              // ── Sélecteur de difficulté ───────────────────────────────────
+              const Text(
+                'DIFFICULTÉ RESSENTIE',
+                style: TextStyle(
+                  color: CouleurApp.texteGris,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [1, 2, 3].map((niveau) {
+                  final estSelectionne = difficulte == niveau;
+                  final c = _couleursDiff[niveau]!;
+                  const labels = {1: '😊 Facile', 2: '😐 Moyen', 3: '😰 Difficile'};
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: () => onDifficulteChanged(niveau),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        margin: EdgeInsets.only(right: niveau < 3 ? 8 : 0),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: estSelectionne ? c : c.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: estSelectionne ? c : c.withValues(alpha: 0.3),
+                            width: estSelectionne ? 2 : 1,
+                          ),
+                        ),
+                        child: Text(
+                          labels[niveau]!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: estSelectionne ? Colors.white : c,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
