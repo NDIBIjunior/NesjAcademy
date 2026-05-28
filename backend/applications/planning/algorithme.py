@@ -998,6 +998,32 @@ class SessionConstructeur:
                 key=lambda m: -_coeff(m),
             )
 
+            # ── Répartition forte / légère selon présence HCC_PUR ────────────────
+            # Quand HCC_PUR est au programme : HCC_MIXTE reste en légère (preview
+            # uniquement) pour ne pas saturer la tranche forte, et 1 matière LECTURE
+            # migre en forte comme décompression mentale après la session intensive.
+            # Sans HCC_PUR : HCC_MIXTE passe en forte (révision complète) et LECTURE
+            # reste intégralement en légère.
+            duree_forte_dispo = max(
+                (dur for dur, t in plages_du_jour if _est_tranche_forte(t)),
+                default=0,
+            )
+            if hcc_pur_du_jour:
+                hcc_mixte_forte  = []                # HCC_MIXTE → légère seulement
+                hcc_mixte_legere = hcc_mixte_du_jour
+                espace_apres_hcc = duree_forte_dispo - DUREE_REVIMM_HCC_PUR
+                if espace_apres_hcc >= DUREE_LECTURE_LEGERE and lecture_du_jour:
+                    lecture_decomp_forte = lecture_du_jour[:1]  # décompression en forte
+                    lecture_pour_legere  = lecture_du_jour[1:]
+                else:
+                    lecture_decomp_forte = []
+                    lecture_pour_legere  = lecture_du_jour
+            else:
+                hcc_mixte_forte      = hcc_mixte_du_jour  # révision complète en forte
+                hcc_mixte_legere     = []
+                lecture_decomp_forte = []
+                lecture_pour_legere  = lecture_du_jour
+
             revisions_non_placees = list(revisions_dues)
 
             for (duree_tranche, tranche_obj) in plages_du_jour:
@@ -1036,8 +1062,8 @@ class SessionConstructeur:
                         )
                         break  # max 1 HCC_PUR par tranche forte
 
-                    # ── Étape 2 : HCC_MIXTE du jour ──────────────────────────
-                    for mat_id in hcc_mixte_du_jour:
+                    # ── Étape 2 : HCC_MIXTE du jour (si pas de HCC_PUR ce jour) ─
+                    for mat_id in hcc_mixte_forte:
                         if minutes_restantes < DUREE_MINIMALE_SESSION:
                             break
                         if mat_id in mat_ids_dans_tranche:
@@ -1059,6 +1085,29 @@ class SessionConstructeur:
                         )
                         logger.debug(
                             "  [%s] FORTE HCC_MIXTE mat=%s %d min", jour_courant, mat_id, duree_eff,
+                        )
+
+                    # ── Étape 2.5 : Décompression LECTURE après HCC_PUR ──────────
+                    # 1 matière LECTURE placée ici pour briser la saturation cognitive
+                    for mat_id in lecture_decomp_forte:
+                        if minutes_restantes < DUREE_MINIMALE_SESSION:
+                            break
+                        if mat_id in mat_ids_dans_tranche:
+                            continue
+                        duree_eff = min(DUREE_LECTURE_LEGERE, minutes_restantes)
+                        if duree_eff < DUREE_MINIMALE_SESSION:
+                            continue
+                        if not _placer_session(
+                            mat_id, duree_eff, SessionEtude.ANTICIPATION,
+                            tranche_obj, jour_courant,
+                        ):
+                            continue
+                        minutes_restantes -= duree_eff
+                        mat_ids_dans_tranche.add(mat_id)
+                        derniere_session[mat_id] = jour_courant
+                        logger.debug(
+                            "  [%s] FORTE DECOMP LECTURE mat=%s %d min",
+                            jour_courant, mat_id, duree_eff,
                         )
 
                     # ── Étape 3 : Bouche-trou HCC_MIXTE (rotation anti-répétition) ──
@@ -1111,7 +1160,7 @@ class SessionConstructeur:
                     # ══════════════════════════════════════════════════════════
 
                     # ── Étape 1 : Matières LECTURE du programme du jour ───────
-                    for mat_id in lecture_du_jour:
+                    for mat_id in lecture_pour_legere:
                         if minutes_restantes < 30:
                             break
                         if mat_id in mat_ids_dans_tranche:
@@ -1132,7 +1181,7 @@ class SessionConstructeur:
 
                     # ── Étape 2 : Preview HCC_MIXTE du programme du jour ──────
                     # (lecture uniquement — pas les exercices)
-                    for mat_id in hcc_mixte_du_jour:
+                    for mat_id in hcc_mixte_legere:
                         if minutes_restantes < 30:
                             break
                         if mat_id in mat_ids_dans_tranche:
