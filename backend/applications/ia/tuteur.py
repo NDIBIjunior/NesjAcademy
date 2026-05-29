@@ -5,7 +5,6 @@ Ce fichier construit le "system prompt" personnalisé injecté à chaque
 appel IA. Plus le contexte est riche, plus les réponses sont pertinentes.
 """
 
-import json
 import logging
 from datetime import date, timedelta
 
@@ -28,9 +27,9 @@ def construire_contexte_tuteur(eleve) -> str:
         ObjectifMatiere, SessionEtude,
     )
 
-    prenom = eleve.first_name or eleve.username
-    niveau = getattr(eleve, 'niveau', '') or ''
-    filiere = getattr(eleve, 'filiere', '') or ''
+    prenom  = eleve.prenom or eleve.telephone
+    niveau  = eleve.niveau or ''
+    filiere = ''  # pas de filière distincte dans le modèle — le niveau suffit
 
     # Matières difficiles / faciles
     objectifs = list(
@@ -43,7 +42,7 @@ def construire_contexte_tuteur(eleve) -> str:
 
     # Jours avant l'examen
     jours_examen = None
-    if getattr(eleve, 'date_examen', None):
+    if eleve.date_examen:
         jours_examen = max(0, (eleve.date_examen - date.today()).days)
 
     # Chapitres & avancement du planning
@@ -82,7 +81,7 @@ def construire_contexte_tuteur(eleve) -> str:
         + (f" filière {filiere}" if filiere else "") + ".",
         "Tu l'aides à comprendre ses cours, à réviser efficacement et à rester motivé.",
         "Tu réponds TOUJOURS en français, de façon claire, bienveillante et concise.",
-        "Tu adaptes tes explications au programme MINESEC (Cameroun), niveau Terminale.",
+        "Tu adaptes tes explications au programme MINESEC (Cameroun), selon la calsse de l'élève.",
         "",
         f"## Profil de {prenom}",
         f"- Avancement du planning : {taux_completion}%",
@@ -105,13 +104,62 @@ def construire_contexte_tuteur(eleve) -> str:
     lignes += [
         "",
         "## Règles de comportement",
-        "- Réponds en 150 mots maximum sauf si une explication détaillée est demandée.",
+        "- Réponds en 150 mots maximum sauf si une explication détaillée est demandée, alors donne tout les détails utiles.",
         "- Pour les exercices ou démonstrations, montre les étapes une par une.",
         "- Si l'élève semble décourager, encourage-le avec bienveillance avant de répondre.",
         "- Utilise des émojis avec modération (max 2 par réponse).",
         "- Ne réponds PAS aux sujets hors contexte scolaire.",
     ]
 
+    return "\n".join(lignes)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contexte séance (aide en temps réel pendant le travail)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def construire_contexte_seance(eleve, chapitre) -> str:
+    """
+    System prompt ultra-ciblé pour NESIA pendant une séance de travail.
+    NESIA sait exactement ce que l'élève étudie et adapte son niveau.
+    """
+    from applications.planning.models import ObjectifMatiere
+
+    prenom  = eleve.prenom or eleve.telephone
+    niveau  = eleve.niveau or 'Terminale'
+    matiere = chapitre.matiere
+
+    label_diff = ''
+    try:
+        obj = ObjectifMatiere.objects.get(eleve=eleve, matiere=matiere)
+        niv = obj.niveau_difficulte
+        if niv >= 4:
+            label_diff = "très difficile pour toi"
+        elif niv >= 3:
+            label_diff = "difficile pour toi"
+        elif niv == 2:
+            label_diff = "de difficulté moyenne pour toi"
+        else:
+            label_diff = "un de tes points forts"
+    except ObjectifMatiere.DoesNotExist:
+        pass
+
+    lignes = [
+        f"Tu es NESIA, le tuteur IA de {prenom}, qui l'accompagne EN TEMPS RÉEL pendant sa séance.",
+        f"{prenom} étudie EN CE MOMENT :",
+        f"  • Matière : {matiere.nom}" + (f" ({label_diff})" if label_diff else ""),
+        f"  • Chapitre : {chapitre.titre}",
+        f"  • Niveau : {niveau}, programme MINESEC Cameroun",
+        "",
+        "## Ton rôle pendant cette séance",
+        "- Réponds UNIQUEMENT aux questions liées à ce chapitre ou à cette matière.",
+        "- Sois TRÈS CONCIS (100 mots maximum) : l'élève travaille, son temps est précieux.",
+        "- Si l'élève est bloqué, guide-le par des questions plutôt que de donner la réponse.",
+        "- Si la matière est difficile pour lui, sois encore plus patient et bienveillant.",
+        "- Encourage-le s'il semble découragé, puis réponds à sa question.",
+        "- Va droit au but — pas d'introduction longue.",
+        "- Réponds TOUJOURS en français.",
+    ]
     return "\n".join(lignes)
 
 
@@ -124,8 +172,8 @@ def construire_contexte_quiz(eleve, chapitre) -> str:
     Construit le system prompt pour générer un quiz QCM sur un chapitre précis.
     La réponse de l'IA sera du JSON parsable.
     """
-    prenom = eleve.first_name or eleve.username
-    niveau = getattr(eleve, 'niveau', 'Terminale')
+    prenom = eleve.prenom or eleve.telephone
+    niveau = eleve.niveau or 'Terminale'
 
     return f"""
 Tu es NESIA, un tuteur IA. Tu génères des quiz pédagogiques pour les élèves camerounais.
@@ -168,7 +216,7 @@ def construire_contexte_conseil(eleve) -> str:
     """
     from applications.planning.models import SessionEtude
 
-    prenom = eleve.first_name or eleve.username
+    prenom = eleve.prenom or eleve.telephone
 
     # Données planning
     stats = {}

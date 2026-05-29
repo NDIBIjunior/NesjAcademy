@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../composants/bulle_nesia.dart';
 import '../ecrans/accueil/ecran_accueil.dart';
 import '../ecrans/planning/ecran_planning.dart';
 import '../ecrans/profil/ecran_profil.dart';
@@ -99,15 +100,25 @@ class _NavigationPrincipaleState extends State<NavigationPrincipale> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: CouleurApp.fondClair,
-      // ── Contenu : fade élégant entre onglets ────────────────────────────
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 200),
-        transitionBuilder: (child, animation) =>
-            FadeTransition(opacity: animation, child: child),
-        child: KeyedSubtree(
-          key: ValueKey(_ongletActif),
-          child: _pages[_ongletActif],
-        ),
+      // ── Contenu : fade élégant entre onglets + bulle NESIA ──────────────
+      body: Stack(
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            transitionBuilder: (child, animation) =>
+                FadeTransition(opacity: animation, child: child),
+            child: KeyedSubtree(
+              key: ValueKey(_ongletActif),
+              child: _pages[_ongletActif],
+            ),
+          ),
+          // Bulle flottante NESIA — coin inférieur droit, au-dessus du contenu
+          const Positioned(
+            right: 16,
+            bottom: 16,
+            child: BulleNesia(),
+          ),
+        ],
       ),
       // ── Barre de navigation + bouton Focus flottant ──────────────────────
       // Stack avec Clip.none : permet au FAB de déborder vers le haut

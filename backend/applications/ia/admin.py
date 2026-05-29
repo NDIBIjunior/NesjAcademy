@@ -14,7 +14,7 @@ class MessageIAInline(admin.TabularInline):
 class ConversationIAAdmin(admin.ModelAdmin):
     list_display  = ('eleve', 'type_conversation', 'nb_messages', 'date_debut', 'date_derniere_activite')
     list_filter   = ('type_conversation',)
-    search_fields = ('eleve__username', 'eleve__first_name', 'eleve__last_name')
+    search_fields = ('eleve__telephone', 'eleve__prenom', 'eleve__nom')
     readonly_fields = ('date_debut', 'date_derniere_activite', 'nb_messages')
     inlines       = [MessageIAInline]
 

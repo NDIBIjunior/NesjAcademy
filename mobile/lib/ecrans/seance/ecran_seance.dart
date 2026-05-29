@@ -4,9 +4,12 @@ import 'dart:math' show pi, cos, sin;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../composants/feuille_nesia_seance.dart';
 import '../../composants/guide_professeur.dart';
+import '../ia/ecran_quiz_seance.dart';
 import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
@@ -149,6 +152,20 @@ class _EcranSeanceState extends State<EcranSeance> {
 
   void _allerAConcentration() => setState(() => _phase = _Phase.concentration);
 
+  void _ouvrirNesia() {
+    HapticFeedback.mediumImpact();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => FeuilleNesiaSeance(
+        chapitreId:  _chapitreId,
+        chapitreNom: _titre,
+        matiereNom:  _matiere,
+      ),
+    );
+  }
+
   Future<void> _activerConcentration() async {
     final status = await Permission.notification.request();
     if (mounted) {
@@ -198,9 +215,37 @@ class _EcranSeanceState extends State<EcranSeance> {
         ),
       );
 
-      // Quand _EcranFelicitations se ferme, on dépile EcranSeance.
-      // _demarrer() sur l'accueil reprend alors la main et appelle _rafraichir().
-      if (mounted) Navigator.pop(context, true);
+      if (!mounted) return;
+
+      // Étape 3 — proposition quiz NESIA
+      final faireQuiz = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _DialogPropositionQuiz(
+          chapitreNom: _titre,
+          matiereNom:  _matiere,
+        ),
+      );
+
+      if (!mounted) return;
+
+      if (faireQuiz == true) {
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => EcranQuizSeance(
+              chapitreId:  _chapitreId,
+              chapitreNom: _titre,
+              matiereNom:  _matiere,
+            ),
+          ),
+        );
+        if (!mounted) return;
+      }
+
+      // Retour à l'accueil — _rafraichir() reprend la main.
+      Navigator.pop(context, true);
     } catch (_) {
       if (!mounted) return;
       setState(() => _enTerminaison = false);
@@ -230,16 +275,17 @@ class _EcranSeanceState extends State<EcranSeance> {
         ),
         child: switch (_phase) {
           _Phase.conseils => _PanneauConseils(
-              key:            const ValueKey('conseils'),
-              matiere:        _matiere,
-              titre:          _titre,
-              type:           _type,
-              estPilier:      _estPilier,
-              dureeMinutes:   _dureeMinutes,
-              conseil:        _conseilPourMatiere(_matiere),
-              onPret:         _allerAConcentration,
-              onRetour:       () => Navigator.pop(context),
-              onRecalibrer:   _type == 'decouverte' ? _recalibrer : null,
+              key:              const ValueKey('conseils'),
+              matiere:          _matiere,
+              titre:            _titre,
+              type:             _type,
+              estPilier:        _estPilier,
+              dureeMinutes:     _dureeMinutes,
+              conseil:          _conseilPourMatiere(_matiere),
+              onPret:           _allerAConcentration,
+              onRetour:         () => Navigator.pop(context),
+              onRecalibrer:     _type == 'decouverte' ? _recalibrer : null,
+              onDemanderNesia:  _ouvrirNesia,
             ),
           _Phase.concentration => _PanneauConcentration(
               key:       const ValueKey('concentration'),
@@ -257,6 +303,7 @@ class _EcranSeanceState extends State<EcranSeance> {
               enTerminaison:      _enTerminaison,
               onTogglePause:      _togglePause,
               onTerminer:         _terminer,
+              onDemanderNesia:    _ouvrirNesia,
             ),
         },
       ),
@@ -277,6 +324,7 @@ class _PanneauConseils extends StatelessWidget {
   final String               conseil;
   final VoidCallback         onPret;
   final VoidCallback         onRetour;
+  final VoidCallback         onDemanderNesia;
   // null = pas de recalibrage (révisions)
   final Future<void> Function()? onRecalibrer;
 
@@ -290,6 +338,7 @@ class _PanneauConseils extends StatelessWidget {
     required this.conseil,
     required this.onPret,
     required this.onRetour,
+    required this.onDemanderNesia,
     this.onRecalibrer,
   });
 
@@ -477,6 +526,39 @@ class _PanneauConseils extends StatelessWidget {
               const SizedBox(height: 10),
             ],
 
+            // ── Bouton NESIA ──────────────────────────────────────────────
+            SizedBox(
+              width:  double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: onDemanderNesia,
+                icon: Container(
+                  width: 22, height: 22,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFF4F7FFF), Color(0xFF0F1E48)],
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Center(
+                    child: Text('N', style: TextStyle(
+                      color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800,
+                    )),
+                  ),
+                ),
+                label: const Text('Demander à NESIA'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: CouleurApp.bleuPrincipal,
+                  side:  const BorderSide(color: CouleurApp.bleuPrincipal),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
             // ── Bouton Je suis prêt ───────────────────────────────────────
             SizedBox(
               width:  double.infinity,
@@ -640,6 +722,7 @@ class _PanneauChrono extends StatefulWidget {
   final bool   enTerminaison;
   final VoidCallback onTogglePause;
   final VoidCallback onTerminer;
+  final VoidCallback onDemanderNesia;
 
   const _PanneauChrono({
     super.key,
@@ -652,6 +735,7 @@ class _PanneauChrono extends StatefulWidget {
     required this.enTerminaison,
     required this.onTogglePause,
     required this.onTerminer,
+    required this.onDemanderNesia,
   });
 
   @override
@@ -806,7 +890,32 @@ class _PanneauChronoState extends State<_PanneauChrono>
               ),
             ),
 
-            const Spacer(),
+            // ── Bouton NESIA (discret — le chrono continue) ──────────────
+            Center(
+              child: TextButton.icon(
+                onPressed: widget.onDemanderNesia,
+                icon: Container(
+                  width: 20, height: 20,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFF4F7FFF), Color(0xFF0F1E48)],
+                    ),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Center(
+                    child: Text('N', style: TextStyle(
+                      color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800,
+                    )),
+                  ),
+                ),
+                label: const Text('Demander à NESIA'),
+                style: TextButton.styleFrom(
+                  foregroundColor: CouleurApp.bleuPrincipal,
+                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
 
             // ── Actions — même hauteur imposée ───────────────────────────
             Row(
@@ -1399,7 +1508,7 @@ class _EcranFelicitationsState extends State<_EcranFelicitations>
           Positioned.fill(
             child: AnimatedBuilder(
               animation: _ctrl,
-              builder: (_, __) => CustomPaint(
+              builder: (_, _) => CustomPaint(
                 painter: _PeintreFeux(_ctrl.value),
               ),
             ),
@@ -1545,6 +1654,139 @@ class _PeintreFeux extends CustomPainter {
 
   @override
   bool shouldRepaint(_PeintreFeux old) => old.t != t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dialogue de proposition de quiz — affiché après les félicitations
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DialogPropositionQuiz extends StatelessWidget {
+  final String chapitreNom;
+  final String matiereNom;
+
+  const _DialogPropositionQuiz({
+    required this.chapitreNom,
+    required this.matiereNom,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+        decoration: BoxDecoration(
+          color:        Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color:      Colors.black.withValues(alpha: 0.12),
+              blurRadius: 32,
+              offset:     const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Avatar NESIA
+            Container(
+              width: 68, height: 68,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end:   Alignment.bottomRight,
+                  colors: [Color(0xFF4F7FFF), Color(0xFF0F1E48)],
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: const Center(
+                child: Text('N', style: TextStyle(
+                  color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800,
+                )),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            const Text(
+              'Quiz flash ! 🎯',
+              style: TextStyle(
+                color:      CouleurApp.bleuSombre,
+                fontSize:   20,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+
+            Text(
+              'NESIA a préparé 3 questions sur ce chapitre pour consolider tes acquis.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color:  CouleurApp.texteGris,
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Badge chapitre
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color:        CouleurApp.bleuClair,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '$matiereNom — $chapitreNom',
+                style: const TextStyle(
+                  color:      CouleurApp.bleuPrincipal,
+                  fontSize:   12,
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Bouton principal
+            SizedBox(
+              width: double.infinity, height: 50,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CouleurApp.bleuPrincipal,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w600,
+                  ),
+                ),
+                child: const Text('Je fais le quiz !'),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Bouton secondaire
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text(
+                'Plus tard',
+                style: TextStyle(
+                  color:    CouleurApp.texteGris,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ── Chip d'état réutilisable ──────────────────────────────────────────────────

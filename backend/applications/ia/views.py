@@ -12,6 +12,7 @@ from .models import ConversationIA, MessageIA
 from .tuteur import (
     construire_contexte_conseil,
     construire_contexte_quiz,
+    construire_contexte_seance,
     construire_contexte_tuteur,
 )
 
@@ -36,6 +37,7 @@ def _serialiser_conversation(conv):
         'id':                    conv.id,
         'type_conversation':     conv.type_conversation,
         'nb_messages':           conv.nb_messages,
+        'chapitre_id':           conv.chapitre_id,
         'date_debut':            conv.date_debut.isoformat(),
         'date_derniere_activite': conv.date_derniere_activite.isoformat(),
     }
@@ -66,20 +68,50 @@ class VueTuteurConversations(APIView):
         return Response([_serialiser_conversation(c) for c in convs])
 
     def post(self, request):
-        eleve = request.user
-        conv  = ConversationIA.objects.create(
+        eleve       = request.user
+        chapitre_id = request.data.get('chapitre_id')
+        chapitre    = None
+
+        if chapitre_id:
+            from applications.planning.models import Chapitre, ObjectifMatiere
+            try:
+                chapitre = Chapitre.objects.select_related('matiere').get(id=chapitre_id)
+            except Chapitre.DoesNotExist:
+                return Response({'erreur': 'Chapitre introuvable.'}, status=404)
+
+        type_conv = ConversationIA.TYPE_SEANCE if chapitre else ConversationIA.TYPE_TUTEUR
+        conv = ConversationIA.objects.create(
             eleve=eleve,
-            type_conversation=ConversationIA.TYPE_TUTEUR,
+            type_conversation=type_conv,
+            chapitre=chapitre,
         )
 
-        # Message de bienvenue de NESIA
-        system   = construire_contexte_tuteur(eleve)
-        prenom   = eleve.first_name or eleve.username
-        bienvenue = (
-            f"Bonjour {prenom} ! 👋 Je suis NESIA, ton tuteur IA. "
-            "Je connais ton planning et tes matières. "
-            "Pose-moi n'importe quelle question sur tes cours — je suis là pour t'aider ! 😊"
-        )
+        prenom = eleve.prenom or eleve.telephone
+
+        if chapitre:
+            # Bienvenue ciblée : NESIA sait exactement ce qu'on étudie
+            complement = ''
+            try:
+                from applications.planning.models import ObjectifMatiere
+                obj = ObjectifMatiere.objects.get(eleve=eleve, matiere=chapitre.matiere)
+                if obj.niveau_difficulte >= 3:
+                    complement = (
+                        f" Je sais que {chapitre.matiere.nom} peut être "
+                        "difficile — on avance ensemble, pas de panique !"
+                    )
+            except Exception:
+                pass
+            bienvenue = (
+                f"Bonjour {prenom} ! 📚 Je suis là pour t'accompagner pendant cette séance.\n"
+                f"On travaille sur « {chapitre.titre} » en {chapitre.matiere.nom}.{complement}\n"
+                "Pose-moi toutes tes questions sur ce chapitre !"
+            )
+        else:
+            bienvenue = (
+                f"Bonjour {prenom} ! 👋 Je suis NESIA, ton tuteur IA. "
+                "Je connais ton planning et tes matières. "
+                "Pose-moi n'importe quelle question sur tes cours — je suis là pour t'aider ! 😊"
+            )
 
         msg_nesia = MessageIA.objects.create(
             conversation=conv,
@@ -112,10 +144,13 @@ class VueTuteurMessage(APIView):
 
     def _get_conv(self, request, pk):
         try:
-            return ConversationIA.objects.get(
+            return ConversationIA.objects.select_related('chapitre__matiere').get(
                 pk=pk,
                 eleve=request.user,
-                type_conversation=ConversationIA.TYPE_TUTEUR,
+                type_conversation__in=[
+                    ConversationIA.TYPE_TUTEUR,
+                    ConversationIA.TYPE_SEANCE,
+                ],
             )
         except ConversationIA.DoesNotExist:
             return None
@@ -160,10 +195,13 @@ class VueTuteurMessage(APIView):
             for m in conv.messages.order_by('date_envoi')
         ]
 
-        # Appel IA
+        # Appel IA — contexte adapté au type de conversation
         try:
-            ia      = get_fournisseur()
-            system  = construire_contexte_tuteur(request.user)
+            ia = get_fournisseur()
+            if conv.type_conversation == ConversationIA.TYPE_SEANCE and conv.chapitre:
+                system = construire_contexte_seance(request.user, conv.chapitre)
+            else:
+                system = construire_contexte_tuteur(request.user)
             reponse = ia.chat(system, historique)
         except Exception as e:
             logger.error("Erreur appel IA tuteur : %s", e)

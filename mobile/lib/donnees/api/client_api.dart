@@ -45,16 +45,20 @@ class ClientApi {
   }
 
   // Requête POST (authentifiée ou publique selon avecToken)
+  // Le paramètre [timeout] permet de surcharger la durée par défaut —
+  // utile pour les appels IA longs (quiz, génération de contenu).
   static Future<http.Response> post(
     String url,
     Map<String, dynamic> corps, {
-    bool avecToken = false,
+    bool     avecToken = false,
+    Duration? timeout,
   }) async {
+    final duree = timeout ?? Constantes.dureeRequete;
     var rep = await http.post(
       Uri.parse(url),
       headers: await _entetes(avecToken: avecToken),
       body: jsonEncode(corps),
-    ).timeout(Constantes.dureeRequete);
+    ).timeout(duree);
 
     // Refresh silencieux si le token a expiré
     if (rep.statusCode == 401 && avecToken) {
@@ -63,7 +67,7 @@ class ClientApi {
           Uri.parse(url),
           headers: await _entetes(avecToken: true),
           body: jsonEncode(corps),
-        ).timeout(Constantes.dureeRequete);
+        ).timeout(duree);
       }
     }
     return rep;

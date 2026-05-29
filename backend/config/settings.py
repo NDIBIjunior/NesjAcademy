@@ -138,10 +138,12 @@ STATIC_URL = 'static/'
 AUTH_USER_MODEL = 'utilisateurs.Utilisateur'
 
 # ── Intelligence Artificielle (NESIA) ─────────────────────────────────────────
-# Pour passer de Gemini à Anthropic : changer IA_FOURNISSEUR dans .env
+# Pour changer de fournisseur : modifier IA_FOURNISSEUR dans .env
+# Valeurs : gemini | openrouter | anthropic
 IA_FOURNISSEUR             = env('IA_FOURNISSEUR', default='gemini')
 GEMINI_API_KEY             = env('GEMINI_API_KEY', default='')
 ANTHROPIC_API_KEY          = env('ANTHROPIC_API_KEY', default='')
+OPENROUTER_API_KEY         = env('OPENROUTER_API_KEY', default='')
 IA_MAX_TOKENS              = env('IA_MAX_TOKENS', default=600, cast=int)
 IA_MAX_MESSAGES_PAR_CONV   = env('IA_MAX_MESSAGES_PAR_CONV', default=50, cast=int)
 

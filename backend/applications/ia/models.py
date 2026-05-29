@@ -6,10 +6,12 @@ class ConversationIA(models.Model):
     """Session de chat entre un élève et NESIA."""
 
     TYPE_TUTEUR  = 'tuteur'
+    TYPE_SEANCE  = 'seance'
     TYPE_QUIZ    = 'quiz'
     TYPE_CONSEIL = 'conseil'
     TYPES = [
         (TYPE_TUTEUR,  'Tuteur — questions libres'),
+        (TYPE_SEANCE,  'Séance — aide pendant le travail'),
         (TYPE_QUIZ,    'Quiz — révision guidée'),
         (TYPE_CONSEIL, 'Conseil — analyse du planning'),
     ]
@@ -19,6 +21,13 @@ class ConversationIA(models.Model):
         on_delete=models.CASCADE,
         related_name='conversations_ia',
         limit_choices_to={'role': 'eleve'},
+    )
+    chapitre = models.ForeignKey(
+        'planning.Chapitre',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversations_ia',
     )
     type_conversation      = models.CharField(max_length=10, choices=TYPES, default=TYPE_TUTEUR)
     date_debut             = models.DateTimeField(auto_now_add=True)

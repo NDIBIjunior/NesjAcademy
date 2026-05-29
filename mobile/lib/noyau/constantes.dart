@@ -54,6 +54,11 @@ abstract class Constantes {
   static const String urlFocusDebut        = '$_base/analytique/focus/debut/';
   static const String urlProgression2      = '$_base/analytique/progression/';
 
+  // IA — NESIA
+  static const String urlIaTuteurConversations = '$_base/ia/tuteur/conversations/';
+  static const String urlIaQuiz               = '$_base/ia/quiz/';
+  static const String urlIaConseil            = '$_base/ia/conseil/';
+
   // ── Clés de stockage local (shared_preferences) ──────────────────────────
   static const String cleTokenAcces   = 'token_acces';
   static const String cleTokenRefresh = 'token_refresh';
