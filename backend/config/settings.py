@@ -10,20 +10,27 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+# Charge les variables depuis .env si présent (python-decouple)
+try:
+    from decouple import config as env
+    _USE_DECOUPLE = True
+except ImportError:
+    _USE_DECOUPLE = False
+    def env(key, default=None, cast=None):
+        val = os.environ.get(key, default)
+        return cast(val) if (cast and val is not None) else val
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-&1aw_jvnda(dlcydm*1alii4&(90st0cdg+=x@dfhj15hhm0@1'
+SECRET_KEY = env('SECRET_KEY', default='django-insecure-&1aw_jvnda(dlcydm*1alii4&(90st0cdg+=x@dfhj15hhm0@1')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = []
 
@@ -45,6 +52,7 @@ INSTALLED_APPS = [
     'applications.planning',
     'applications.diagnostic',
     'applications.analytique',
+    'applications.ia',
 ]
 
 MIDDLEWARE = [
@@ -128,6 +136,14 @@ STATIC_URL = 'static/'
 
 
 AUTH_USER_MODEL = 'utilisateurs.Utilisateur'
+
+# ── Intelligence Artificielle (NESIA) ─────────────────────────────────────────
+# Pour passer de Gemini à Anthropic : changer IA_FOURNISSEUR dans .env
+IA_FOURNISSEUR             = env('IA_FOURNISSEUR', default='gemini')
+GEMINI_API_KEY             = env('GEMINI_API_KEY', default='')
+ANTHROPIC_API_KEY          = env('ANTHROPIC_API_KEY', default='')
+IA_MAX_TOKENS              = env('IA_MAX_TOKENS', default=600, cast=int)
+IA_MAX_MESSAGES_PAR_CONV   = env('IA_MAX_MESSAGES_PAR_CONV', default=50, cast=int)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
