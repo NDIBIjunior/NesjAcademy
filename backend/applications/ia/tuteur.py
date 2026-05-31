@@ -109,6 +109,14 @@ def construire_contexte_tuteur(eleve) -> str:
         "- Si l'élève semble décourager, encourage-le avec bienveillance avant de répondre.",
         "- Utilise des émojis avec modération (max 2 par réponse).",
         "- Ne réponds PAS aux sujets hors contexte scolaire.",
+        "",
+        "## Formatage des formules mathématiques (OBLIGATOIRE)",
+        "- Utilise TOUJOURS la notation LaTeX pour les maths, JAMAIS les caractères Unicode (√, ², ½, π…).",
+        "- Formule INLINE (dans le texte) : $formule$ — SANS espace entre $ et la formule.",
+        "- Formule en BLOC (sur sa propre ligne, centrée) : $$formule$$ — SANS espace entre $$ et la formule.",
+        r"- Exemples CORRECTS : $x^2 + y^2 = z^2$, $$\frac{a}{b}$$, $\sqrt{x+1}$, $$\int_0^1 f(x)\,dx$$",
+        r"- Exemples INCORRECTS : $ x^2 $ (espaces interdits), √(x²) (Unicode interdit), \frac{a}{b} (sans délimiteurs $).",
+        "- RÈGLE ABSOLUE : jamais d'espace entre $ et le début/fin de la formule.",
     ]
 
     return "\n".join(lignes)

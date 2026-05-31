@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
+import 'package:markdown/markdown.dart' as md;
 
 import '../../donnees/api/service_ia.dart';
 import '../../donnees/modeles/message_ia.dart';
@@ -20,6 +22,25 @@ abstract class _T {
   static const Color lightText      = Color(0xFF4A6572);
   static const Color purple         = Color(0xFF6F56E8);
   static const String font          = 'WorkSans';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Normalisation LaTeX — convertit \[...\] et \(...\) vers $$...$$ / $...$
+// pour que flutter_markdown_latex les détecte correctement.
+// ─────────────────────────────────────────────────────────────────────────────
+
+String _normaliserLatex(String texte) {
+  // \[...\]  →  $$...$$  (math en bloc, notation alternative)
+  texte = texte.replaceAllMapped(
+    RegExp(r'\\\[([\s\S]*?)\\\]'),
+    (m) => '\$\$${m.group(1)}\$\$',
+  );
+  // \(...\)  →  $...$  (math inline, notation alternative)
+  texte = texte.replaceAllMapped(
+    RegExp(r'\\\(([\s\S]*?)\\\)'),
+    (m) => '\$${m.group(1)}\$',
+  );
+  return texte;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -672,16 +693,42 @@ class _BulleBase extends StatelessWidget {
       return const SizedBox(width: 4, height: 20);
     }
 
+    // Normaliser les notations LaTeX alternatives avant de rendre
+    final texteNormalise = _normaliserLatex(contenu);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         MarkdownBody(
-          data:          contenu,
+          data:          texteNormalise,
           styleSheet:    _styleMarkdownNesia(),
           shrinkWrap:    true,
           softLineBreak: true,
           selectable:    false,
+          // Extension LaTeX : reconnaît $...$ (inline) et $$...$$ (bloc)
+          builders: {
+            'latex': LatexElementBuilder(
+              textStyle: const TextStyle(
+                fontFamily: _T.font,
+                color:      _T.darkText,
+                fontSize:   14,
+              ),
+              textScaleFactor: 1.1,
+            ),
+          },
+          extensionSet: md.ExtensionSet(
+            // Blocs : syntaxe LaTeX + GitHub Flavored Markdown
+            [
+              LatexBlockSyntax(),
+              ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+            ],
+            // Inline : syntaxe LaTeX + GitHub Flavored Markdown
+            [
+              LatexInlineSyntax(),
+              ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
+            ],
+          ),
         ),
         // Curseur clignotant pendant le streaming
         if (enStream && cursorAnim != null)

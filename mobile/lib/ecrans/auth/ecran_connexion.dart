@@ -563,6 +563,10 @@ class _ChampFocusState extends State<_ChampFocus> {
           prefixIcon: widget.prefixe != null
               ? IntrinsicWidth(child: widget.prefixe!)
               : null,
+          // Laisse le préfixe (« +237 » + séparateur) prendre sa largeur
+          // naturelle au lieu d'être écrasé dans la boîte d'icône 48 px
+          // (sinon RenderFlex overflow sur le Row du préfixe).
+          prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
           suffixIcon:         widget.suffixe,
           border:             InputBorder.none,
           enabledBorder:      InputBorder.none,

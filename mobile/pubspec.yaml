@@ -53,6 +53,10 @@ dependencies:
   # Rendu markdown — réponses NESIA (gras, listes, code…)
   flutter_markdown: ^0.6.22
 
+  # Rendu LaTeX / formules mathématiques dans les réponses NESIA
+  flutter_math_fork: ^0.7.2
+  flutter_markdown_latex: ^0.3.3
+
   # Typographie premium — PlusJakartaSans (design system v2)
   google_fonts: ^6.1.0
 

@@ -7,7 +7,11 @@
       "PowerShell(Get-Process *)",
       "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python manage.py check 2>&1)",
       "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python -c \"import django; django.setup\\(\\); from django.urls import reverse; print\\(reverse\\('auth-profil'\\)\\); print\\(reverse\\('auth-profil-complet'\\)\\)\" 2>&1)",
-      "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; $env:DJANGO_SETTINGS_MODULE = \"config.settings\"; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python -c \"import django; django.setup\\(\\); from django.urls import reverse; print\\(reverse\\('auth-profil'\\)\\); print\\(reverse\\('auth-profil-complet'\\)\\)\" 2>&1)"
+      "PowerShell($env:Path = \"C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts;\" + $env:Path; $env:DJANGO_SETTINGS_MODULE = \"config.settings\"; Set-Location \"C:\\\\projet\\\\NesjAcademy\\\\backend\"; python -c \"import django; django.setup\\(\\); from django.urls import reverse; print\\(reverse\\('auth-profil'\\)\\); print\\(reverse\\('auth-profil-complet'\\)\\)\" 2>&1)",
+      "Bash(python *)",
+      "PowerShell(C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts\\\\python.exe C:\\\\projet\\\\NesjAcademy\\\\backend\\\\manage.py makemigrations planning --name tranche_horaire 2>&1)",
+      "Bash(venvScriptspython.exe -c ' *)",
+      "Bash(venv/Scripts/python.exe -c ' *)"
     ]
   }
 }
