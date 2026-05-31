@@ -50,6 +50,9 @@ dependencies:
   # Graphiques (barres par matière sur l'écran Progrès)
   fl_chart: ^0.68.0
 
+  # Rendu markdown — réponses NESIA (gras, listes, code…)
+  flutter_markdown: ^0.6.22
+
   # Typographie premium — PlusJakartaSans (design system v2)
   google_fonts: ^6.1.0
 

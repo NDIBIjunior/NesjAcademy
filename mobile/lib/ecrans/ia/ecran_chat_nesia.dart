@@ -1,11 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../donnees/api/service_ia.dart';
 import '../../donnees/modeles/message_ia.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Palette Fitness — identique aux autres écrans
+// Palette Fitness
 // ─────────────────────────────────────────────────────────────────────────────
 
 abstract class _T {
@@ -13,11 +16,55 @@ abstract class _T {
   static const Color white          = Color(0xFFFFFFFF);
   static const Color nearlyDarkBlue = Color(0xFF2633C5);
   static const Color grey           = Color(0xFF3A5160);
-  static const Color darkText        = Color(0xFF253840);
+  static const Color darkText       = Color(0xFF253840);
   static const Color lightText      = Color(0xFF4A6572);
   static const Color purple         = Color(0xFF6F56E8);
   static const String font          = 'WorkSans';
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Style markdown NESIA — dark text sur fond blanc
+// ─────────────────────────────────────────────────────────────────────────────
+
+MarkdownStyleSheet _styleMarkdownNesia() => MarkdownStyleSheet(
+  p:              const TextStyle(
+    fontFamily: _T.font, fontSize: 14, color: _T.darkText, height: 1.52),
+  strong:         const TextStyle(
+    fontFamily: _T.font, fontSize: 14, fontWeight: FontWeight.w700,
+    color: _T.darkText),
+  em:             const TextStyle(
+    fontFamily: _T.font, fontSize: 14, fontStyle: FontStyle.italic,
+    color: _T.darkText),
+  h1:             const TextStyle(
+    fontFamily: _T.font, fontSize: 18, fontWeight: FontWeight.w800,
+    color: _T.darkText),
+  h2:             const TextStyle(
+    fontFamily: _T.font, fontSize: 16, fontWeight: FontWeight.w700,
+    color: _T.darkText),
+  h3:             const TextStyle(
+    fontFamily: _T.font, fontSize: 15, fontWeight: FontWeight.w700,
+    color: _T.darkText),
+  code:           TextStyle(
+    fontFamily: 'monospace', fontSize: 13,
+    backgroundColor: _T.nearlyDarkBlue.withValues(alpha: 0.08),
+    color: _T.nearlyDarkBlue),
+  codeblockDecoration: BoxDecoration(
+    color:        _T.nearlyDarkBlue.withValues(alpha: 0.06),
+    borderRadius: BorderRadius.circular(8),
+  ),
+  listBullet:    const TextStyle(
+    fontFamily: _T.font, fontSize: 14, color: _T.nearlyDarkBlue),
+  blockquoteDecoration: BoxDecoration(
+    color:        _T.nearlyDarkBlue.withValues(alpha: 0.05),
+    borderRadius: BorderRadius.circular(4),
+    border: Border(left: BorderSide(
+        color: _T.nearlyDarkBlue.withValues(alpha: 0.4), width: 3)),
+  ),
+  horizontalRuleDecoration: BoxDecoration(
+    border: Border(bottom: BorderSide(
+        color: _T.grey.withValues(alpha: 0.2), width: 1)),
+  ),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EcranChatNesia
@@ -43,23 +90,33 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
   bool  _envoi          = false;
   String? _erreurInit;
 
-  // Contrôleur pour l'animation d'entrée de l'en-tête
+  // ── Streaming (réponse séquentielle) ──────────────────────────────────────
+  // Après réception de la réponse complète, le texte est révélé progressivement.
+  String?    _texteEnStream;   // portion affichée en ce moment (null = pas en stream)
+  String     _contenuComplet = '';  // texte complet à révéler
+  int        _indexChar      = 0;
+  Timer?     _streamTimer;
+  MessageIA? _msgEnAttente;   // message à ajouter aux _messages une fois fini
+
+  // ── Animation header ───────────────────────────────────────────────────────
   late final AnimationController _headerCtrl;
   late final Animation<double>   _headerAnim;
+
+  bool get _occupee => _envoi || _texteEnStream != null;
 
   @override
   void initState() {
     super.initState();
     _headerCtrl = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 500));
-    _headerAnim = CurvedAnimation(
-      parent: _headerCtrl, curve: Curves.easeOut);
+    _headerAnim = CurvedAnimation(parent: _headerCtrl, curve: Curves.easeOut);
     _headerCtrl.forward();
     _demarrerConversation();
   }
 
   @override
   void dispose() {
+    _streamTimer?.cancel();
     _champTexte.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
@@ -74,7 +131,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
       final res = await ServiceIa.creerConversation();
       if (!mounted) return;
       setState(() {
-        _convId        = res.conv.id;
+        _convId         = res.conv.id;
         _messages.add(res.bienvenue);
         _initialisation = false;
       });
@@ -90,7 +147,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
 
   Future<void> _envoyer() async {
     final texte = _champTexte.text.trim();
-    if (texte.isEmpty || _envoi || _convId == null) return;
+    if (texte.isEmpty || _occupee || _convId == null) return;
 
     HapticFeedback.lightImpact();
     _champTexte.clear();
@@ -108,8 +165,9 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
     try {
       final reponse = await ServiceIa.envoyerMessage(_convId!, texte);
       if (!mounted) return;
-      setState(() { _messages.add(reponse); _envoi = false; });
-      _defilerVersBas();
+      // L'envoi est terminé — on démarre le streaming visuel
+      setState(() => _envoi = false);
+      _demarrerStream(reponse);
     } catch (e) {
       if (!mounted) return;
       setState(() => _envoi = false);
@@ -117,12 +175,46 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
     }
   }
 
+  // ── Streaming visuel ───────────────────────────────────────────────────────
+
+  void _demarrerStream(MessageIA reponse) {
+    _msgEnAttente    = reponse;
+    _contenuComplet  = reponse.contenu;
+    _indexChar       = 0;
+    setState(() => _texteEnStream = '');
+
+    // 4 caractères toutes les 18 ms ≈ 220 chars/s — naturel et lisible
+    _streamTimer = Timer.periodic(const Duration(milliseconds: 18), (_) {
+      if (!mounted) { _streamTimer?.cancel(); return; }
+
+      final fin = (_indexChar + 4).clamp(0, _contenuComplet.length);
+      setState(() {
+        _indexChar      = fin;
+        _texteEnStream  = _contenuComplet.substring(0, fin);
+      });
+      _defilerVersBas();
+
+      if (fin >= _contenuComplet.length) {
+        _streamTimer?.cancel();
+        _streamTimer = null;
+        // Finaliser : remplacer la bulle de stream par le message complet
+        setState(() {
+          _messages.add(_msgEnAttente!);
+          _texteEnStream = null;
+          _indexChar     = 0;
+          _msgEnAttente  = null;
+        });
+        _defilerVersBas();
+      }
+    });
+  }
+
   void _defilerVersBas() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(
           _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
+          duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
       }
@@ -158,7 +250,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
     );
   }
 
-  // ── En-tête NESIA ──────────────────────────────────────────────────────────
+  // ── En-tête ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
     return FadeTransition(
@@ -178,7 +270,6 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
               padding: const EdgeInsets.fromLTRB(8, 8, 16, 20),
               child: Row(
                 children: [
-                  // Bouton retour
                   SizedBox(
                     width: 44, height: 44,
                     child: InkWell(
@@ -191,7 +282,6 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                     ),
                   ),
                   const SizedBox(width: 10),
-                  // Avatar "N"
                   Container(
                     width: 44, height: 44,
                     decoration: BoxDecoration(
@@ -203,25 +293,20 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                     child: const Center(
                       child: Text('N',
                         style: TextStyle(
-                          fontFamily:  _T.font,
-                          color:       Colors.white,
-                          fontSize:    22,
-                          fontWeight:  FontWeight.w800,
+                          fontFamily:  _T.font, color: Colors.white,
+                          fontSize:    22, fontWeight: FontWeight.w800,
                         )),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Titre + statut
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text('NESIA',
                           style: TextStyle(
-                            fontFamily:    _T.font,
-                            color:         Colors.white,
-                            fontSize:      18,
-                            fontWeight:    FontWeight.w800,
+                            fontFamily: _T.font, color: Colors.white,
+                            fontSize: 18, fontWeight: FontWeight.w800,
                             letterSpacing: 1.0,
                           )),
                         const SizedBox(height: 2),
@@ -237,10 +322,8 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                             const SizedBox(width: 5),
                             Text('Tuteur IA · en ligne',
                               style: TextStyle(
-                                fontFamily: _T.font,
-                                color:      Colors.white.withValues(alpha: 0.75),
-                                fontSize:   12,
-                              )),
+                                fontFamily: _T.font, fontSize: 12,
+                                color: Colors.white.withValues(alpha: 0.75))),
                           ],
                         ),
                       ],
@@ -266,9 +349,19 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
       child: ListView.builder(
         controller:  _scrollCtrl,
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
-        itemCount:   _messages.length + (_envoi ? 1 : 0),
+        // Messages + éventuellement typing + éventuellement bulle de stream
+        itemCount: _messages.length
+            + (_envoi ? 1 : 0)
+            + (_texteEnStream != null ? 1 : 0),
         itemBuilder: (_, i) {
-          if (_envoi && i == _messages.length) return const _BulleTyping();
+          // Typing indicator (en attente de la réponse API)
+          if (_envoi && i == _messages.length) {
+            return const _BulleTyping();
+          }
+          // Bulle de streaming (réponse en train de s'écrire)
+          if (_texteEnStream != null && i == _messages.length) {
+            return _BulleStream(texte: _texteEnStream!);
+          }
           return _BulleMessage(message: _messages[i]);
         },
       ),
@@ -300,14 +393,12 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                 keyboardType:    TextInputType.multiline,
                 textInputAction: TextInputAction.newline,
                 style: const TextStyle(
-                  fontFamily: _T.font, fontSize: 14, color: _T.darkText),
+                    fontFamily: _T.font, fontSize: 14, color: _T.darkText),
                 decoration: InputDecoration(
                   hintText:  'Pose ta question à NESIA…',
                   hintStyle: TextStyle(
-                    fontFamily: _T.font,
-                    color: _T.lightText.withValues(alpha: 0.7),
-                    fontSize: 14,
-                  ),
+                    fontFamily: _T.font, fontSize: 14,
+                    color: _T.lightText.withValues(alpha: 0.7)),
                   border:          InputBorder.none,
                   contentPadding:  const EdgeInsets.symmetric(
                       horizontal: 18, vertical: 12),
@@ -318,7 +409,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
           ),
           const SizedBox(width: 10),
           _BoutonEnvoi(
-            actif: !_envoi && _convId != null,
+            actif: !_occupee && _convId != null,
             onTap: _envoyer,
           ),
         ],
@@ -333,13 +424,12 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Grand avatar pulsant
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0.95, end: 1.05),
             duration: const Duration(milliseconds: 900),
             curve: Curves.easeInOut,
-            builder: (_, scale, child) => Transform.scale(
-                scale: scale, child: child),
+            builder: (_, scale, child) =>
+                Transform.scale(scale: scale, child: child),
             child: Container(
               width: 72, height: 72,
               decoration: BoxDecoration(
@@ -350,8 +440,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                 shape: BoxShape.circle,
                 boxShadow: [BoxShadow(
                   color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
-                  blurRadius: 20, offset: const Offset(0, 8),
-                )],
+                  blurRadius: 20, offset: const Offset(0, 8))],
               ),
               child: const Center(
                 child: Text('N',
@@ -385,10 +474,9 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
             Container(
               width: 64, height: 64,
               decoration: BoxDecoration(
-                color: _T.background, shape: BoxShape.circle),
-              child: Center(
-                child: Text('😕',
-                  style: const TextStyle(fontSize: 30))),
+                  color: _T.background, shape: BoxShape.circle),
+              child: const Center(child: Text('😕',
+                  style: TextStyle(fontSize: 30))),
             ),
             const SizedBox(height: 18),
             Text(_erreurInit!,
@@ -422,8 +510,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                       child: Text('Réessayer',
                         style: TextStyle(
                           fontFamily: _T.font, fontSize: 14,
-                          fontWeight: FontWeight.w600, color: Colors.white)),
-                    ),
+                          fontWeight: FontWeight.w600, color: Colors.white))),
                   ),
                 ),
               ),
@@ -436,9 +523,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _BulleMessage — bulle de conversation
-// NESIA  : blanche, coin bottomLeft plat, ombre légère
-// Élève  : dégradé nearlyDarkBlue → purple, coin bottomRight plat
+// _BulleMessage — message finalisé avec rendu markdown pour NESIA
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _BulleMessage extends StatelessWidget {
@@ -448,7 +533,69 @@ class _BulleMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final estNesia = message.estNesia;
+    return _BulleBase(estNesia: estNesia, contenu: message.contenu, enStream: false);
+  }
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// _BulleStream — bulle de streaming (texte partiel + curseur clignotant)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BulleStream extends StatefulWidget {
+  final String texte;
+  const _BulleStream({required this.texte});
+
+  @override
+  State<_BulleStream> createState() => _BulleStreamState();
+}
+
+class _BulleStreamState extends State<_BulleStream>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _cursorCtrl;
+  late final Animation<double>   _cursorAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _cursorCtrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 500))
+      ..repeat(reverse: true);
+    _cursorAnim = CurvedAnimation(parent: _cursorCtrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() { _cursorCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    return _BulleBase(
+      estNesia:  true,
+      contenu:   widget.texte,
+      enStream:  true,
+      cursorAnim: _cursorAnim,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _BulleBase — rendu commun NESIA / Élève / Stream
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BulleBase extends StatelessWidget {
+  final bool             estNesia;
+  final String           contenu;
+  final bool             enStream;
+  final Animation<double>? cursorAnim;
+
+  const _BulleBase({
+    required this.estNesia,
+    required this.contenu,
+    required this.enStream,
+    this.cursorAnim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
@@ -456,13 +603,13 @@ class _BulleMessage extends StatelessWidget {
             estNesia ? MainAxisAlignment.start : MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Avatar NESIA petit
+          // Avatar NESIA
           if (estNesia) ...[
             Container(
               width: 30, height: 30,
               margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
                   colors: [_T.nearlyDarkBlue, _T.purple],
                   begin: Alignment.topLeft, end: Alignment.bottomRight,
                 ),
@@ -481,11 +628,9 @@ class _BulleMessage extends StatelessWidget {
             child: Container(
               constraints: BoxConstraints(
                   maxWidth: MediaQuery.of(context).size.width * 0.72),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
               decoration: BoxDecoration(
-                // NESIA : blanc, ombre douce
-                color: estNesia ? _T.white : null,
-                // Élève : dégradé
+                color:    estNesia ? _T.white : null,
                 gradient: estNesia ? null : const LinearGradient(
                   colors: [_T.nearlyDarkBlue, _T.purple],
                   begin: Alignment.topLeft, end: Alignment.bottomRight,
@@ -506,26 +651,58 @@ class _BulleMessage extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Text(
-                message.contenu,
-                style: TextStyle(
-                  fontFamily: _T.font,
-                  color:      estNesia ? _T.darkText : Colors.white,
-                  fontSize:   14,
-                  height:     1.5,
-                ),
-              ),
+              child: estNesia
+                  ? _buildMarkdownNesia()
+                  : Text(contenu,
+                      style: const TextStyle(
+                        fontFamily: _T.font, color: Colors.white,
+                        fontSize: 14, height: 1.5)),
             ),
           ),
+
           if (!estNesia) const SizedBox(width: 4),
         ],
       ),
     );
   }
+
+  Widget _buildMarkdownNesia() {
+    // Texte vide pendant les premières millisecondes du stream
+    if (contenu.isEmpty && enStream) {
+      return const SizedBox(width: 4, height: 20);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MarkdownBody(
+          data:          contenu,
+          styleSheet:    _styleMarkdownNesia(),
+          shrinkWrap:    true,
+          softLineBreak: true,
+          selectable:    false,
+        ),
+        // Curseur clignotant pendant le streaming
+        if (enStream && cursorAnim != null)
+          FadeTransition(
+            opacity: cursorAnim!,
+            child: Container(
+              width: 2, height: 16,
+              margin: const EdgeInsets.only(top: 2),
+              decoration: BoxDecoration(
+                color:        _T.nearlyDarkBlue,
+                borderRadius: BorderRadius.circular(1),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _BulleTyping — 3 points animés pendant que NESIA rédige
+// _BulleTyping — 3 points animés pendant que NESIA répond à l'API
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _BulleTyping extends StatefulWidget {
@@ -641,18 +818,15 @@ class _BoutonEnvoi extends StatelessWidget {
                   begin: Alignment.topLeft, end: Alignment.bottomRight,
                 )
               : null,
-          color:     actif ? null : _T.background,
-          shape:     BoxShape.circle,
+          color:  actif ? null : _T.background,
+          shape:  BoxShape.circle,
           boxShadow: actif ? [BoxShadow(
             color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
             blurRadius: 10, offset: const Offset(0, 4),
           )] : null,
         ),
-        child: Icon(
-          Icons.send_rounded,
-          color: actif ? Colors.white : _T.lightText,
-          size:  20,
-        ),
+        child: Icon(Icons.send_rounded,
+            color: actif ? Colors.white : _T.lightText, size: 20),
       ),
     );
   }
