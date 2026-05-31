@@ -10,6 +10,8 @@ import '../../donnees/local/stockage_local.dart';
 import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/observateur_route.dart';
+import '../planning/ecran_decaler_session.dart';
+import '../planning/ecran_report_session.dart';
 import '../planning/ecran_seances_retard.dart';
 import '../seance/ecran_seance.dart';
 
@@ -160,6 +162,19 @@ class _EcranAccueilState extends State<EcranAccueil>
     final d = _donnees!;
     const int count = 5;
 
+    // Section Prochaine séance — en tête (premier écran que voit l'élève)
+    final prochaine = _prochaineSeance();
+    if (prochaine != null) {
+      listViews.add(_CarteProchaineSeance(
+        session:             prochaine,
+        animationController: animationController!,
+        animation: Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
+            parent: animationController!,
+            curve: const Interval(0, 0.6, curve: Curves.fastOutSlowIn))),
+        onTap: () => _afficherOptionsSeance(context, prochaine, _rafraichir),
+      ));
+    }
+
     // Section 0 — Titre "Mon Journal d'études"
     listViews.add(_VueTitre(
       titre:   'Séances du jour',
@@ -238,6 +253,33 @@ class _EcranAccueilState extends State<EcranAccueil>
         )),
       ));
     }
+  }
+
+  // Prochaine séance à faire : 1re séance non complétée d'aujourd'hui,
+  // sinon la 1re séance à venir dans la semaine (jours suivants).
+  Map<String, dynamic>? _prochaineSeance() {
+    final d = _donnees;
+    if (d == null) return null;
+
+    // Aujourd'hui d'abord
+    for (final s in d.sessions) {
+      if (s['completee'] != true && s['est_optionnelle'] != true) return s;
+    }
+
+    // Sinon, parcourir la semaine à partir d'aujourd'hui
+    final now   = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final cles  = d.sessionsSemaine.keys.toList()..sort();
+    for (final cle in cles) {
+      final date = DateTime.tryParse(cle);
+      if (date == null || date.isBefore(today)) continue;
+      final liste = [...d.sessionsSemaine[cle]!]
+        ..sort((a, b) => _heureTri(a).compareTo(_heureTri(b)));
+      for (final s in liste) {
+        if (s['completee'] != true && s['est_optionnelle'] != true) return s;
+      }
+    }
+    return null;
   }
 
   // ── Chargement données ────────────────────────────────────────────────────
@@ -1230,20 +1272,17 @@ class _CarteSeance extends StatelessWidget {
 
   // Couleurs par type — copiées des MealsListData
   static const _couleurs = {
-    'decouverte':   ('#FA7D82', '#FFB295'),
-    'revision_j1':  ('#738AE6', '#5C5EDD'),
-    'revision_j3':  ('#FE95B6', '#FF5287'),
-    'revision_j7':  ('#6F72CA', '#1E1466'),
-    'revision_j14': ('#F9A825', '#FF7043'),
+    'decouverte':         ('#FA7D82', '#FFB295'),
+    'revision_immediate': ('#738AE6', '#5C5EDD'),
+    'revision_j1':        ('#738AE6', '#5C5EDD'),
+    'revision_j3':        ('#FE95B6', '#FF5287'),
+    'revision_j7':        ('#6F72CA', '#1E1466'),
+    'revision_j14':       ('#F9A825', '#FF7043'),
   };
 
-  static const _libellesType = {
-    'decouverte':   'Découverte',
-    'revision_j1':  'Rév. J+1',
-    'revision_j3':  'Rév. J+3',
-    'revision_j7':  'Rév. J+7',
-    'revision_j14': 'Rév. J+14',
-  };
+  // Lettre affichée dans la pastille : A = Anticipation (découverte), R = Révision
+  static String lettreType(String type) =>
+      type.startsWith('revision') ? 'R' : 'A';
 
   @override
   Widget build(BuildContext context) {
@@ -1253,11 +1292,25 @@ class _CarteSeance extends StatelessWidget {
     final type       = session['type_session'] as String;
     final duree      = session['duree_minutes'] as int;
     final completee  = session['completee']    as bool? ?? false;
-    final initiale   = matiere.isNotEmpty ? matiere[0].toUpperCase() : '?';
-    final libelle    = _libellesType[type] ?? type;
+    final lettre     = lettreType(type);
     final couleurs   = _couleurs[type] ?? ('#738AE6', '#5C5EDD');
     final startColor = HexColor(couleurs.$1);
     final endColor   = HexColor(couleurs.$2);
+
+    // Créneau horaire : heure de la session, sinon heure de la tranche
+    final heureDebut = session['heure_debut_session'] as String?;
+    final heureFin   = session['heure_fin_session']   as String?;
+    final tranche    = session['tranche']             as Map<String, dynamic>?;
+    final String? creneau = heureDebut != null
+        ? '${_hhmm(heureDebut)} → ${_hhmm(heureFin)}'
+        : tranche != null
+            ? '${_hhmm(tranche['heure_debut'] as String?)} → ${_hhmm(tranche['heure_fin'] as String?)}'
+            : null;
+
+    final h = duree ~/ 60; final m = duree % 60;
+    final labelDuree = h > 0
+        ? '${h}h${m > 0 ? m.toString().padLeft(2, '0') : ''}'
+        : '${m}min';
 
     return AnimatedBuilder(
       animation: animationController,
@@ -1267,13 +1320,9 @@ class _CarteSeance extends StatelessWidget {
           transform: Matrix4.translationValues(
               100 * (1.0 - animation.value), 0.0, 0.0),
           child: GestureDetector(
-            onTap: completee ? null : () async {
-              await Navigator.push(context, MaterialPageRoute(
-                builder: (_) => EcranSeance(session: session)));
-              onDemarree();
-            },
+            onTap: () => _afficherOptionsSeance(context, session, onDemarree),
             child: SizedBox(
-              width: 130,
+              width: 150,
               child: Stack(
                 children: [
                   // Carte gradient (exactement comme MealsView)
@@ -1303,63 +1352,72 @@ class _CarteSeance extends StatelessWidget {
                         ),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.only(top: 54, left: 16, right: 8, bottom: 8),
+                        padding: const EdgeInsets.only(top: 54, left: 16, right: 12, bottom: 12),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(libelle,
+                            // Nom de la matière (à la place de l'ancien type)
+                            Text(
+                              matiere,
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontFamily: _T.font, fontWeight: FontWeight.bold,
                                 fontSize: 14, letterSpacing: 0.2, color: _T.white,
                               )),
+                            // Titre du chapitre
                             Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.only(top: 6, bottom: 4),
+                                padding: const EdgeInsets.only(top: 4, bottom: 4),
                                 child: Text(
-                                  titre.length > 30 ? '${titre.substring(0, 28)}…' : titre,
+                                  titre,
+                                  maxLines: 3, overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontFamily: _T.font, fontWeight: FontWeight.w500,
-                                    fontSize: 10, letterSpacing: 0.2, color: _T.white,
+                                    fontSize: 11, letterSpacing: 0.2, height: 1.25,
+                                    color: _T.white.withValues(alpha: 0.92),
                                   )),
                               ),
                             ),
-                            completee
-                                ? Row(
-                                    children: [
-                                      const Icon(Icons.check_circle_rounded,
-                                          color: Colors.white70, size: 16),
-                                      const SizedBox(width: 4),
-                                      Text('Fait',
-                                        style: TextStyle(
-                                          fontFamily: _T.font, fontWeight: FontWeight.w500,
-                                          fontSize: 12, color: _T.white,
-                                        )),
-                                    ],
-                                  )
-                                : Row(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text('$duree',
-                                        style: TextStyle(
-                                          fontFamily: _T.font, fontWeight: FontWeight.w500,
-                                          fontSize: 22, color: _T.white,
-                                        )),
-                                      Padding(
-                                        padding: const EdgeInsets.only(left: 4, bottom: 3),
-                                        child: Text('min',
-                                          style: TextStyle(
-                                            fontFamily: _T.font, fontWeight: FontWeight.w500,
-                                            fontSize: 10, color: _T.white,
-                                          )),
-                                      ),
-                                    ],
-                                  ),
+                            if (completee)
+                              Row(
+                                children: [
+                                  const Icon(Icons.check_circle_rounded,
+                                      color: Colors.white70, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text('Fait',
+                                    style: TextStyle(
+                                      fontFamily: _T.font, fontWeight: FontWeight.w500,
+                                      fontSize: 12, color: _T.white,
+                                    )),
+                                ],
+                              )
+                            else ...[
+                              // Créneau horaire
+                              if (creneau != null)
+                                Text(creneau,
+                                  style: TextStyle(
+                                    fontFamily: _T.font, fontWeight: FontWeight.w600,
+                                    fontSize: 11, color: _T.white,
+                                  )),
+                              const SizedBox(height: 2),
+                              // Durée
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(labelDuree,
+                                    style: TextStyle(
+                                      fontFamily: _T.font, fontWeight: FontWeight.w700,
+                                      fontSize: 18, color: _T.white,
+                                    )),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ),
                   ),
-                  // Cercle translucide derrière l'initiale
+                  // Cercle translucide derrière la pastille
                   Positioned(
                     top: 0, left: 0,
                     child: Container(
@@ -1370,7 +1428,7 @@ class _CarteSeance extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Initiale de la matière (remplace l'image du template)
+                  // Pastille lettre du type (A = Anticipation, R = Révision)
                   Positioned(
                     top: 0, left: 8,
                     child: Container(
@@ -1384,9 +1442,9 @@ class _CarteSeance extends StatelessWidget {
                         border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 2),
                       ),
                       child: Center(
-                        child: Text(initiale,
+                        child: Text(lettre,
                           style: const TextStyle(
-                            color: Colors.white, fontSize: 32,
+                            color: Colors.white, fontSize: 34,
                             fontWeight: FontWeight.w800, fontFamily: 'WorkSans',
                           )),
                       ),
@@ -1395,6 +1453,495 @@ class _CarteSeance extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Normalise une heure "HH:MM:SS" → "HH:MM" (les heures backend ont les secondes)
+String _hhmm(String? heure) {
+  if (heure == null) return '';
+  final parts = heure.split(':');
+  return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : heure;
+}
+
+// Heure de début pour le tri chronologique d'une séance.
+String _heureTri(Map<String, dynamic> s) =>
+    (s['heure_debut_session'] as String?) ??
+    ((s['tranche'] as Map<String, dynamic>?)?['heure_debut'] as String?) ??
+    '99:99';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _CarteProchaineSeance — carte hero (déplacée depuis le Planning).
+// C'est le premier élément que voit l'élève : mise en avant + clic → options.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CarteProchaineSeance extends StatelessWidget {
+  final Map<String, dynamic> session;
+  final AnimationController   animationController;
+  final Animation<double>     animation;
+  final VoidCallback          onTap;
+
+  const _CarteProchaineSeance({
+    required this.session,
+    required this.animationController,
+    required this.animation,
+    required this.onTap,
+  });
+
+  static const _libellesType = {
+    'decouverte':         'Anticipation',
+    'revision_immediate': 'Révision · après cours',
+    'revision_j1':        'Révision · J+1',
+    'revision_j3':        'Révision · J+3',
+    'revision_j7':        'Révision · J+7',
+    'revision_j14':       'Révision · J+14',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final chapitre = session['chapitre']      as Map<String, dynamic>;
+    final titre    = chapitre['titre']        as String;
+    final matiere  = chapitre['matiere_nom']  as String;
+    final type     = session['type_session']  as String;
+    final duree    = session['duree_minutes'] as int;
+    final tranche  = session['tranche']       as Map<String, dynamic>?;
+    final heureDebut = session['heure_debut_session'] as String?;
+    final heureFin   = session['heure_fin_session']   as String?;
+    final libelle    = _libellesType[type] ?? type;
+
+    final h = duree ~/ 60; final m = duree % 60;
+    final labelDuree = h > 0
+        ? '${h}h${m > 0 ? m.toString().padLeft(2, '0') : ''}'
+        : '${m}min';
+
+    final String? creneau = heureDebut != null
+        ? '${_hhmm(heureDebut)} → ${_hhmm(heureFin)}'
+        : tranche != null
+            ? '${_hhmm(tranche['heure_debut'] as String?)} → ${_hhmm(tranche['heure_fin'] as String?)}'
+            : null;
+
+    return AnimatedBuilder(
+      animation: animationController,
+      builder: (_, __) => FadeTransition(
+        opacity: animation,
+        child: Transform(
+          transform: Matrix4.translationValues(0.0, 30 * (1.0 - animation.value), 0.0),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 24, right: 24, top: 8, bottom: 8),
+            child: GestureDetector(
+              onTap: onTap,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [_T.nearlyDarkBlue, HexColor('#6A88E5')],
+                    begin: Alignment.topLeft,
+                    end:   Alignment.bottomRight,
+                  ),
+                  borderRadius: const BorderRadius.only(
+                    topLeft:     Radius.circular(8),
+                    bottomLeft:  Radius.circular(8),
+                    bottomRight: Radius.circular(8),
+                    topRight:    Radius.circular(68),
+                  ),
+                  boxShadow: [BoxShadow(
+                    color:      _T.nearlyDarkBlue.withValues(alpha: 0.4),
+                    offset:     const Offset(1.1, 1.1),
+                    blurRadius: 10.0,
+                  )],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.bolt_rounded, color: Colors.white70, size: 16),
+                          const SizedBox(width: 4),
+                          Text('Prochaine séance · $libelle',
+                            style: TextStyle(fontFamily: _T.font, fontSize: 13,
+                                color: Colors.white70)),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(matiere,
+                        style: TextStyle(fontFamily: _T.font, fontSize: 13,
+                            fontWeight: FontWeight.w600, color: Colors.white70)),
+                      const SizedBox(height: 2),
+                      Text(titre,
+                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontFamily: _T.font, fontSize: 19,
+                            fontWeight: FontWeight.w600, color: Colors.white, height: 1.2)),
+                      const SizedBox(height: 18),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Icon(Icons.timer_rounded, color: Colors.white, size: 16),
+                          const SizedBox(width: 4),
+                          Text(labelDuree,
+                            style: TextStyle(fontFamily: _T.font, fontSize: 14,
+                                fontWeight: FontWeight.w500, color: Colors.white)),
+                          if (creneau != null) ...[
+                            const SizedBox(width: 12),
+                            const Icon(Icons.access_time_rounded, color: Colors.white, size: 16),
+                            const SizedBox(width: 4),
+                            Text(creneau,
+                              style: TextStyle(fontFamily: _T.font, fontSize: 14,
+                                  fontWeight: FontWeight.w500, color: Colors.white)),
+                          ],
+                          const Spacer(),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: _T.nearlyWhite,
+                              shape: BoxShape.circle,
+                              boxShadow: [BoxShadow(
+                                color:      Colors.black.withValues(alpha: 0.3),
+                                offset:     const Offset(4, 4),
+                                blurRadius: 8,
+                              )],
+                            ),
+                            child: const Icon(Icons.play_arrow_rounded,
+                                color: _T.nearlyDarkBlue, size: 30),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dialog d'options de séance — "sweet alert" centrée, fidèle à la palette _T.
+// Présente la séance + 3 actions : Commencer / Décaler / Reporter.
+// (Le template Fitness n'a pas de dialog → popup créé sur mesure, cohérent.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void _afficherOptionsSeance(
+  BuildContext context,
+  Map<String, dynamic> session,
+  VoidCallback onAction,
+) {
+  showGeneralDialog(
+    context:            context,
+    barrierDismissible: true,
+    barrierLabel:       'Options de séance',
+    barrierColor:       Colors.black.withValues(alpha: 0.45),
+    transitionDuration: const Duration(milliseconds: 240),
+    pageBuilder: (_, __, ___) =>
+        _DialogueOptionsSeance(session: session, onAction: onAction),
+    transitionBuilder: (_, anim, __, child) {
+      final t = Curves.easeOutCubic.transform(anim.value);
+      return Opacity(
+        opacity: anim.value,
+        child: Transform.scale(scale: 0.92 + 0.08 * t, child: child),
+      );
+    },
+  );
+}
+
+class _DialogueOptionsSeance extends StatelessWidget {
+  final Map<String, dynamic> session;
+  final VoidCallback         onAction;
+
+  const _DialogueOptionsSeance({required this.session, required this.onAction});
+
+  static const _libellesType = {
+    'decouverte':         'Anticipation',
+    'revision_immediate': 'Révision · après cours',
+    'revision_j1':        'Révision · J+1',
+    'revision_j3':        'Révision · J+3',
+    'revision_j7':        'Révision · J+7',
+    'revision_j14':       'Révision · J+14',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final chapitre  = session['chapitre'] as Map<String, dynamic>;
+    final matiere   = chapitre['matiere_nom'] as String;
+    final titre     = chapitre['titre']       as String;
+    final type      = session['type_session'] as String;
+    final duree     = session['duree_minutes'] as int;
+    final completee = session['completee']    as bool? ?? false;
+    final lettre    = _CarteSeance.lettreType(type);
+    final libelle   = _libellesType[type] ?? type;
+    final couleurs  = _CarteSeance._couleurs[type] ?? ('#738AE6', '#5C5EDD');
+    final startColor = HexColor(couleurs.$1);
+    final endColor   = HexColor(couleurs.$2);
+
+    final heureDebut = session['heure_debut_session'] as String?;
+    final heureFin   = session['heure_fin_session']   as String?;
+    final tranche    = session['tranche']             as Map<String, dynamic>?;
+    final String? creneau = heureDebut != null
+        ? '${_hhmm(heureDebut)} → ${_hhmm(heureFin)}'
+        : tranche != null
+            ? '${_hhmm(tranche['heure_debut'] as String?)} → ${_hhmm(tranche['heure_fin'] as String?)}'
+            : null;
+
+    final h = duree ~/ 60; final m = duree % 60;
+    final labelDuree = h > 0
+        ? '${h}h${m > 0 ? m.toString().padLeft(2, '0') : ''}'
+        : '$m min';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            decoration: BoxDecoration(
+              color: _T.white,
+              borderRadius: const BorderRadius.only(
+                topLeft:     Radius.circular(24),
+                bottomLeft:  Radius.circular(24),
+                bottomRight: Radius.circular(24),
+                topRight:    Radius.circular(48),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color:      _T.grey.withValues(alpha: 0.35),
+                  offset:     const Offset(0, 12),
+                  blurRadius: 32,
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                mainAxisSize:       MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── En-tête : pastille + type + matière ──────────────────
+                  Row(
+                    children: [
+                      Container(
+                        width: 56, height: 56,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [startColor.withValues(alpha: 0.85), endColor],
+                            begin: Alignment.topLeft, end: Alignment.bottomRight,
+                          ),
+                          shape: BoxShape.circle,
+                          boxShadow: [BoxShadow(
+                            color:      endColor.withValues(alpha: 0.45),
+                            offset:     const Offset(0, 4),
+                            blurRadius: 10,
+                          )],
+                        ),
+                        child: Center(
+                          child: Text(lettre,
+                            style: const TextStyle(
+                              color: Colors.white, fontSize: 26,
+                              fontWeight: FontWeight.w800, fontFamily: 'WorkSans',
+                            )),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(libelle.toUpperCase(),
+                              style: TextStyle(
+                                fontFamily: _T.font, fontWeight: FontWeight.w700,
+                                fontSize: 11, letterSpacing: 0.8, color: endColor,
+                              )),
+                            const SizedBox(height: 2),
+                            Text(matiere,
+                              maxLines: 2, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: _T.font, fontWeight: FontWeight.bold,
+                                fontSize: 18, color: _T.darkerText,
+                              )),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+
+                  // ── Chapitre ─────────────────────────────────────────────
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color:        _T.background,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('CHAPITRE',
+                          style: TextStyle(
+                            fontFamily: _T.font, fontWeight: FontWeight.w700,
+                            fontSize: 10, letterSpacing: 1.0, color: _T.lightText,
+                          )),
+                        const SizedBox(height: 5),
+                        Text(titre,
+                          style: TextStyle(
+                            fontFamily: _T.font, fontWeight: FontWeight.bold,
+                            fontSize: 15, height: 1.3, color: _T.darkerText,
+                          )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // ── Créneau + durée ──────────────────────────────────────
+                  Row(
+                    children: [
+                      if (creneau != null) ...[
+                        Icon(Icons.access_time_rounded, size: 16, color: _T.lightText),
+                        const SizedBox(width: 6),
+                        Text(creneau,
+                          style: TextStyle(
+                            fontFamily: _T.font, fontWeight: FontWeight.w600,
+                            fontSize: 13, color: _T.darkText,
+                          )),
+                        const Spacer(),
+                      ],
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color:        _T.nearlyDarkBlue.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(labelDuree,
+                          style: TextStyle(
+                            fontFamily: _T.font, fontWeight: FontWeight.w700,
+                            fontSize: 13, color: _T.nearlyDarkBlue,
+                          )),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+
+                  // ── Actions ──────────────────────────────────────────────
+                  if (completee)
+                    _boutonFermer(context)
+                  else ...[
+                    _boutonCommencer(context),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(child: _boutonSecondaire(
+                          context, 'Décaler',
+                          () => _ouvrir(context, EcranDecalerSession(
+                              session: session, onDecale: onAction)),
+                        )),
+                        const SizedBox(width: 10),
+                        Expanded(child: _boutonSecondaire(
+                          context, 'Reporter',
+                          () => _ouvrir(context, EcranReportSession(
+                              session: session, onReporte: onAction)),
+                        )),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Ferme le dialog puis ouvre l'écran demandé, et rafraîchit au retour.
+  Future<void> _ouvrir(BuildContext context, Widget ecran) async {
+    final nav = Navigator.of(context);
+    nav.pop();
+    await nav.push(MaterialPageRoute(builder: (_) => ecran));
+  }
+
+  Widget _boutonCommencer(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [_T.nearlyDarkBlue, HexColor('#6A88E5')],
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(
+            color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
+            offset:     const Offset(0, 6),
+            blurRadius: 14,
+          )],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => _ouvrir(context, EcranSeance(session: session)),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 22),
+                  const SizedBox(width: 6),
+                  Text('Commencer la séance',
+                    style: TextStyle(
+                      fontFamily: _T.font, fontWeight: FontWeight.w700,
+                      fontSize: 15, color: Colors.white,
+                    )),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _boutonSecondaire(BuildContext context, String label, VoidCallback onTap) {
+    return SizedBox(
+      height: 48,
+      child: Material(
+        color: _T.nearlyDarkBlue.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Center(
+            child: Text(label,
+              style: TextStyle(
+                fontFamily: _T.font, fontWeight: FontWeight.w600,
+                fontSize: 14, color: _T.nearlyDarkBlue,
+              )),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _boutonFermer(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      width: double.infinity,
+      child: Material(
+        color: _T.background,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => Navigator.of(context).pop(),
+          child: Center(
+            child: Text('Séance déjà terminée · Fermer',
+              style: TextStyle(
+                fontFamily: _T.font, fontWeight: FontWeight.w600,
+                fontSize: 14, color: _T.lightText,
+              )),
           ),
         ),
       ),

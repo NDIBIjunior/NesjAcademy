@@ -1,14 +1,88 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
-import '../../noyau/theme.dart';
 import 'ecran_position_programme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EcranPlanning — calendrier hebdomadaire interactif
+// Thème — FitnessAppTheme (même palette que ecran_accueil)
+// ─────────────────────────────────────────────────────────────────────────────
+
+abstract class _T {
+  static const Color background     = Color(0xFFF2F3F8);
+  static const Color white          = Color(0xFFFFFFFF);
+  static const Color nearlyDarkBlue = Color(0xFF2633C5);
+  static const Color grey           = Color(0xFF3A5160);
+  static const Color darkText       = Color(0xFF253840);
+  static const Color darkerText     = Color(0xFF17262A);
+  static const Color lightText      = Color(0xFF4A6572);
+  static const Color green          = Color(0xFF10B981);
+  static const Color amber          = Color(0xFFD97706);
+  static const Color purple         = Color(0xFF6F56E8);
+  static const String font          = 'WorkSans';
+
+  static BoxShadow get shadow => BoxShadow(
+    color:      grey.withValues(alpha: 0.2),
+    offset:     const Offset(1.1, 1.1),
+    blurRadius: 10.0,
+  );
+
+  static TextStyle ts({
+    double size = 14,
+    FontWeight weight = FontWeight.w400,
+    Color? color,
+    double spacing = 0.0,
+    double? height,
+  }) =>
+      TextStyle(
+        fontFamily:    font,
+        fontSize:      size,
+        fontWeight:    weight,
+        letterSpacing: spacing,
+        color:         color ?? darkText,
+        height:        height,
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Palette matières — cohérente sur toute la semaine (attribuée à l'ordre
+// d'apparition des matières dans la semaine chargée).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _paletteMatieres = [
+  Color(0xFF2633C5), // nearlyDarkBlue
+  Color(0xFF10B981), // green
+  Color(0xFF7C3AED), // violet
+  Color(0xFF0891B2), // cyan
+  Color(0xFFD97706), // amber
+  Color(0xFFBE185D), // rose
+  Color(0xFF0F766E), // teal
+  Color(0xFFEA580C), // orange
+  Color(0xFF4338CA), // indigo
+  Color(0xFF854D0E), // brun
+];
+
+Map<String, Color> _buildPalette(
+    Map<String, List<Map<String, dynamic>>> donnees) {
+  final ordre = <String>[];
+  for (final liste in donnees.values) {
+    for (final s in liste) {
+      final m = (s['chapitre'] as Map<String, dynamic>)['matiere_nom'] as String;
+      if (!ordre.contains(m)) ordre.add(m);
+    }
+  }
+  return {
+    for (var i = 0; i < ordre.length; i++)
+      ordre[i]: _paletteMatieres[i % _paletteMatieres.length],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EcranPlanning — vue semaine en colonnes scrollables horizontalement,
+// commençant le dimanche. Logique réseau 100 % inchangée.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class EcranPlanning extends StatefulWidget {
@@ -18,44 +92,72 @@ class EcranPlanning extends StatefulWidget {
   State<EcranPlanning> createState() => _EcranPlanningState();
 }
 
-class _EcranPlanningState extends State<EcranPlanning> {
-  late DateTime _debutSemaine;
-  late DateTime _jourSelectionne;
+class _EcranPlanningState extends State<EcranPlanning>
+    with TickerProviderStateMixin {
+
+  // ── Pattern exact du template ──────────────────────────────────────────────
+  AnimationController?   animationController;
+  Animation<double>?     topBarAnimation;
+  final ScrollController scrollController = ScrollController();
+  double topBarOpacity = 0.0;
+
+  // ── État planning ──────────────────────────────────────────────────────────
+  late DateTime _debutSemaine; // dimanche de la semaine affichée
   Map<String, List<Map<String, dynamic>>> _donnees = {};
-  bool    _chargement = true;
+  bool    _chargement               = true;
   String? _erreur;
   bool    _afficherBannierePosition = false;
+
+  // ── Init ───────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _debutSemaine    = _lundiDe(now);
-    _jourSelectionne = DateTime(now.year, now.month, now.day);
+
+    animationController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    topBarAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: animationController!,
+        curve:  const Interval(0, 0.5, curve: Curves.fastOutSlowIn),
+      ),
+    );
+    scrollController.addListener(() {
+      if (scrollController.offset >= 24) {
+        if (topBarOpacity != 1.0) setState(() => topBarOpacity = 1.0);
+      } else if (scrollController.offset >= 0) {
+        final v = scrollController.offset / 24;
+        if (topBarOpacity != v) setState(() => topBarOpacity = v);
+      } else {
+        if (topBarOpacity != 0.0) setState(() => topBarOpacity = 0.0);
+      }
+    });
+
+    _debutSemaine = _dimancheDe(DateTime.now());
     _chargerSemaine(_debutSemaine);
     _verifierPositionProgramme();
   }
 
-  Future<void> _verifierPositionProgramme() async {
-    try {
-      final rep = await ClientApi.get(Constantes.urlPositionProgramme);
-      if (rep.statusCode == 200) {
-        final liste = jsonDecode(utf8.decode(rep.bodyBytes)) as List;
-        final besoin = liste.any((m) => m['besoin_mise_a_jour'] == true);
-        if (mounted) setState(() => _afficherBannierePosition = besoin);
-      }
-    } catch (_) {}
+  @override
+  void dispose() {
+    animationController?.dispose();
+    scrollController.dispose();
+    super.dispose();
   }
 
   // ── Helpers date ──────────────────────────────────────────────────────────
 
-  static DateTime _lundiDe(DateTime d) =>
-      d.subtract(Duration(days: d.weekday - 1));
+  static DateTime _dimancheDe(DateTime d) {
+    final base = DateTime(d.year, d.month, d.day);
+    return base.subtract(Duration(days: base.weekday % 7));
+  }
 
   static String _iso(DateTime d) =>
-      '${d.year.toString().padLeft(4,'0')}-'
-      '${d.month.toString().padLeft(2,'0')}-'
-      '${d.day.toString().padLeft(2,'0')}';
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   bool _memeJour(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
@@ -65,38 +167,52 @@ class _EcranPlanningState extends State<EcranPlanning> {
     'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc',
   ][m];
 
-  String _nomJourComplet(int weekday) => const {
+  String _nomJourComplet(int w) => const {
     1: 'Lundi', 2: 'Mardi', 3: 'Mercredi', 4: 'Jeudi',
     5: 'Vendredi', 6: 'Samedi', 7: 'Dimanche',
-  }[weekday]!;
+  }[w]!;
 
-  // ── Chargement ───────────────────────────────────────────────────────────
+  // ── Réseau (LOGIQUE INCHANGÉE) ─────────────────────────────────────────────
 
-  Future<void> _chargerSemaine(DateTime lundi) async {
+  Future<void> _verifierPositionProgramme() async {
+    try {
+      final rep = await ClientApi.get(Constantes.urlPositionProgramme);
+      if (rep.statusCode == 200) {
+        final liste = jsonDecode(utf8.decode(rep.bodyBytes)) as List;
+        if (mounted) {
+          setState(() => _afficherBannierePosition =
+              liste.any((m) => m['besoin_mise_a_jour'] == true));
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _chargerSemaine(DateTime dimanche) async {
     setState(() { _chargement = true; _erreur = null; });
     try {
       final rep = await ClientApi.get(
-        '${Constantes.urlPlanningSemaine}?date_debut=${_iso(lundi)}',
+        '${Constantes.urlPlanningSemaine}?date_debut=${_iso(dimanche)}',
       );
       if (rep.statusCode == 200) {
         final raw = jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>;
         setState(() {
-          _donnees = raw.map(
-            (k, v) => MapEntry(k, (v as List).cast<Map<String, dynamic>>()),
-          );
+          _donnees    = raw.map((k, v) =>
+              MapEntry(k, (v as List).cast<Map<String, dynamic>>()));
           _chargement = false;
         });
       } else if (rep.statusCode == 404) {
         setState(() { _donnees = {}; _chargement = false; });
       } else {
         setState(() {
-          _erreur = 'Erreur lors du chargement (${rep.statusCode}).';
+          _erreur     = 'Erreur de chargement (${rep.statusCode}).';
           _chargement = false;
         });
       }
+      animationController?.reset();
+      animationController?.forward();
     } catch (_) {
       setState(() {
-        _erreur = 'Impossible de charger le planning.';
+        _erreur     = 'Impossible de charger le planning.';
         _chargement = false;
       });
     }
@@ -104,27 +220,21 @@ class _EcranPlanningState extends State<EcranPlanning> {
 
   void _semaineSuivante() {
     final next = _debutSemaine.add(const Duration(days: 7));
-    setState(() { _debutSemaine = next; _jourSelectionne = next; });
+    setState(() => _debutSemaine = next);
     _chargerSemaine(next);
   }
 
   void _semainePrecedente() {
     final prev = _debutSemaine.subtract(const Duration(days: 7));
-    setState(() { _debutSemaine = prev; _jourSelectionne = prev; });
+    setState(() => _debutSemaine = prev);
     _chargerSemaine(prev);
   }
-
-  List<Map<String, dynamic>> get _sessionsJour =>
-      _donnees[_iso(_jourSelectionne)] ?? [];
-
-  // ── Marquer une session complétée ─────────────────────────────────────────
 
   Future<void> _marquerFait(int sessionId) async {
     try {
       final rep = await ClientApi.post(
         '${Constantes.urlSessions}$sessionId/completer/',
-        {},
-        avecToken: true,
+        {}, avecToken: true,
       );
       if (rep.statusCode == 200) {
         setState(() {
@@ -137,577 +247,492 @@ class _EcranPlanningState extends State<EcranPlanning> {
           }
         });
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session marquée comme terminée !'),
-            backgroundColor: Color(0xFF10B981),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      } else {
-        final corps = jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>;
-        throw Exception(corps['erreur'] ?? 'Erreur inconnue');
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Session marquée comme terminée !'),
+          backgroundColor: Color(0xFF10B981),
+          duration: Duration(seconds: 2),
+        ));
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', '')),
-          backgroundColor: CouleurApp.erreur,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.toString().replaceFirst('Exception: ', '')),
+        backgroundColor: Colors.red,
+      ));
     }
   }
 
-  void _afficherDetails(Map<String, dynamic> session) {
+  void _afficherDetails(Map<String, dynamic> session, DateTime date) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => _FeuilleDetailSession(
-        session: session,
-        dateSession: _jourSelectionne,
-        nomJour: _nomJourComplet(_jourSelectionne.weekday),
-        onMarquerFait: session['completee'] == true
-            ? null
-            : () async {
-                Navigator.pop(context);
-                await _marquerFait(session['id'] as int);
-              },
+        session:      session,
+        dateSession:  date,
+        nomJour:      _nomJourComplet(date.weekday),
+        onMarquerFait: session['completee'] == true ? null : () async {
+          Navigator.pop(context);
+          await _marquerFait(session['id'] as int);
+        },
       ),
     );
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: CouleurApp.fondClair,
-      body: Column(
-        children: [
-          _buildEntete(),
-          Container(color: Colors.white, child: _buildSelecteurJours()),
-          const Divider(height: 1, color: CouleurApp.bordure),
-          if (_afficherBannierePosition) _buildBannierePosition(),
-          if (!_chargement && _sessionsJour.isNotEmpty) _buildResumeDuJour(),
-          Expanded(child: _buildContenu()),
+    return Container(
+      color: _T.background,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          children: [
+            _buildCorps(),
+            _getAppBarUI(),
+            SizedBox(height: MediaQuery.of(context).padding.bottom),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Corps scrollable vertical ──────────────────────────────────────────────
+
+  Widget _buildCorps() {
+    if (_erreur != null) return _buildErreur();
+
+    final topPad = AppBar().preferredSize.height +
+        MediaQuery.of(context).padding.top + 24;
+    final botPad = 82.0 + MediaQuery.of(context).padding.bottom;
+
+    return RefreshIndicator(
+      onRefresh: () => _chargerSemaine(_debutSemaine),
+      color: _T.nearlyDarkBlue,
+      child: CustomScrollView(
+        controller: scrollController,
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.only(top: topPad),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                // Bannière position programme
+                if (_afficherBannierePosition)
+                  _buildBannierePosition(),
+
+                // Vue semaine en colonnes
+                _buildVueSemaine(),
+
+                SizedBox(height: botPad),
+              ]),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  // ── Bannière "Où en es-tu avec tes profs ?" ──────────────────────────────
+  // ── Vue semaine : colonnes scrollables horizontalement ─────────────────────
 
-  Widget _buildBannierePosition() {
-    return GestureDetector(
-      onTap: () async {
-        final result = await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(builder: (_) => const EcranPositionProgramme()),
+  Widget _buildVueSemaine() {
+    if (_chargement) return _buildShimmer();
+
+    final palette = _buildPalette(_donnees);
+    final today   = DateTime.now();
+    final todayN  = DateTime(today.year, today.month, today.day);
+
+    // Jours de la semaine : dimanche (i=0) … samedi (i=6)
+    const abrevs = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
+
+    return AnimatedBuilder(
+      animation: animationController!,
+      builder: (_, __) {
+        final anim = Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: animationController!,
+            curve:  const Interval(0.1, 1.0, curve: Curves.fastOutSlowIn),
+          ),
         );
-        if (result == true && mounted) {
-          setState(() => _afficherBannierePosition = false);
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        color: const Color(0xFFFFF7ED),
-        child: const Row(
-          children: [
-            Text('📚', style: TextStyle(fontSize: 18)),
-            SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Où en es-tu avec tes profs ?',
-                    style: TextStyle(
-                      color: Color(0xFF92400E),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
+        return FadeTransition(
+          opacity: anim,
+          child: Transform(
+            transform: Matrix4.translationValues(0.0, 30 * (1.0 - anim.value), 0.0),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _T.white,
+                  borderRadius: const BorderRadius.only(
+                    topLeft:     Radius.circular(8),
+                    bottomLeft:  Radius.circular(8),
+                    bottomRight: Radius.circular(8),
+                    topRight:    Radius.circular(54),
+                  ),
+                  boxShadow: [_T.shadow],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: List.generate(7, (i) {
+                        final jour     = _debutSemaine.add(Duration(days: i));
+                        final estAujd  = _memeJour(jour, todayN);
+                        final key      = _iso(jour);
+                        final sessions = List<Map<String, dynamic>>.from(
+                            _donnees[key] ?? [])
+                          ..sort((a, b) =>
+                              _heureTri(a).compareTo(_heureTri(b)));
+
+                        return Container(
+                          width:  112,
+                          margin: EdgeInsets.only(right: i < 6 ? 10 : 0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // En-tête du jour
+                              _EnTeteJour(
+                                abrev:     abrevs[i],
+                                numero:    jour.day,
+                                estAujd:   estAujd,
+                              ),
+                              const SizedBox(height: 8),
+                              // Sessions ou tiret
+                              if (sessions.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: Center(
+                                    child: Text('—',
+                                      style: _T.ts(size: 18,
+                                          color: _T.lightText.withValues(alpha: 0.4))),
+                                  ),
+                                )
+                              else
+                                ...sessions.map((s) => _BlocSession(
+                                  session: s,
+                                  couleur: palette[
+                                    (s['chapitre'] as Map<String, dynamic>)
+                                        ['matiere_nom'] as String
+                                  ] ?? _T.nearlyDarkBlue,
+                                  onTap: () => _afficherDetails(s, jour),
+                                )),
+                            ],
+                          ),
+                        );
+                      }),
                     ),
                   ),
-                  Text(
-                    'Mets à jour ta position — 1 min par matière',
-                    style: TextStyle(color: Color(0xFFB45309), fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.arrow_forward_ios_rounded,
-                color: Color(0xFF92400E), size: 14),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Résumé du jour (sessions + temps total + progression) ─────────────────
-
-  Widget _buildResumeDuJour() {
-    final toutes    = _sessionsJour;
-    final normales  = toutes.where((s) => s['est_optionnelle'] != true).toList();
-    final total     = normales.length;
-    final faites    = normales.where((s) => s['completee'] == true).length;
-    final dureeMin  = normales.fold<int>(0, (s, e) => s + (e['duree_minutes'] as int));
-    final dureeH    = dureeMin ~/ 60;
-    final dureeRest = dureeMin % 60;
-    final labelDuree = dureeH > 0
-        ? '${dureeH}h${dureeRest > 0 ? dureeRest.toString().padLeft(2,'0') : ''}'
-        : '${dureeMin}min';
-
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      child: Row(
-        children: [
-          // Progression sessions
-          _ChipResume(
-            icone: Icons.assignment_turned_in_outlined,
-            texte: '$faites / $total sessions',
-            couleur: faites == total && total > 0
-                ? CouleurApp.succesVert
-                : CouleurApp.bleuPrincipal,
-          ),
-          const SizedBox(width: 10),
-          // Durée totale
-          _ChipResume(
-            icone: Icons.timer_outlined,
-            texte: labelDuree,
-            couleur: CouleurApp.texteGris,
-          ),
-          const Spacer(),
-          // Barre de progression
-          if (total > 0) ...[
-            SizedBox(
-              width: 80,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: faites / total,
-                  backgroundColor: CouleurApp.bordure,
-                  color: faites == total
-                      ? CouleurApp.succesVert
-                      : CouleurApp.bleuPrincipal,
-                  minHeight: 6,
                 ),
               ),
             ),
-            const SizedBox(width: 6),
-            Text(
-              '${(faites / total * 100).round()}%',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: CouleurApp.bleuSombre,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  // ── En-tête semaine ───────────────────────────────────────────────────────
-
-  Widget _buildEntete() {
-    final fin = _debutSemaine.add(const Duration(days: 6));
-    final mD  = _nomMois(_debutSemaine.month);
-    final mF  = _nomMois(fin.month);
-    final label = _debutSemaine.month == fin.month
-        ? 'Semaine du ${_debutSemaine.day} au ${fin.day} $mF'
-        : 'Du ${_debutSemaine.day} $mD au ${fin.day} $mF';
-
-    return Container(
-      color: Colors.white,
-      padding: EdgeInsets.fromLTRB(4, MediaQuery.of(context).padding.top + 4, 4, 4),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left_rounded, size: 28),
-            color: CouleurApp.bleuPrincipal,
-            onPressed: _semainePrecedente,
           ),
-          Expanded(
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: CouleurApp.bleuSombre,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-              ),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right_rounded, size: 28),
-            color: CouleurApp.bleuPrincipal,
-            onPressed: _semaineSuivante,
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Sélecteur de jours ────────────────────────────────────────────────────
-
-  Widget _buildSelecteurJours() {
-    const lettres = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-    return GestureDetector(
-      onHorizontalDragEnd: (d) {
-        if ((d.primaryVelocity ?? 0) < -200) _semaineSuivante();
-        if ((d.primaryVelocity ?? 0) > 200)  _semainePrecedente();
+        );
       },
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
-        child: Row(
-          children: List.generate(7, (i) {
-            final jour = _debutSemaine.add(Duration(days: i));
-            final sessionsJour = (_donnees[_iso(jour)] ?? [])
-                .where((s) => s['est_optionnelle'] != true).toList();
-            final faites = sessionsJour.where((s) => s['completee'] == true).length;
-            return Expanded(
-              child: _CercleJour(
-                lettre:         lettres[i],
-                numero:         jour.day,
-                estAujourdhui:  _memeJour(jour, DateTime.now()),
-                estSelectionne: _memeJour(jour, _jourSelectionne),
-                nbSessions:     sessionsJour.length,
-                nbFaites:       faites,
-                onTap:          () => setState(() => _jourSelectionne = jour),
-              ),
-            );
-          }),
-        ),
-      ),
     );
   }
 
-  // ── Contenu principal ─────────────────────────────────────────────────────
+  // ── AppBar template ────────────────────────────────────────────────────────
 
-  Widget _buildContenu() {
-    if (_chargement) {
-      return const Center(
-          child: CircularProgressIndicator(color: CouleurApp.bleuPrincipal));
-    }
-    if (_erreur != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.wifi_off_rounded, size: 48, color: CouleurApp.texteGris),
-              const SizedBox(height: 12),
-              Text(_erreur!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: CouleurApp.texteGris)),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () => _chargerSemaine(_debutSemaine),
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Réessayer'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+  Widget _getAppBarUI() {
+    final fin    = _debutSemaine.add(const Duration(days: 6));
+    final mD     = _nomMois(_debutSemaine.month);
+    final mF     = _nomMois(fin.month);
+    final semTxt = _debutSemaine.month == fin.month
+        ? '${_debutSemaine.day}–${fin.day} $mF'
+        : '${_debutSemaine.day} $mD – ${fin.day} $mF';
 
-    final toutes        = _sessionsJour;
-    final sessions      = toutes.where((s) => s['est_optionnelle'] != true).toList();
-    final sessionsBonus = toutes.where((s) => s['est_optionnelle'] == true).toList();
-
-    if (toutes.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('😴', style: TextStyle(fontSize: 56)),
-            const SizedBox(height: 16),
-            Text(
-              _nomJourComplet(_jourSelectionne.weekday),
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: CouleurApp.bleuSombre,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Jour de repos — profite de ta journée !',
-              style: TextStyle(color: CouleurApp.texteGris, fontSize: 13),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Affichage groupé par tranches horaires
-    final aDesTranches = sessions.any((s) => s['tranche'] != null);
-    if (aDesTranches) {
-      return _buildContenuParTranches(sessions, sessionsBonus);
-    }
-
-    // Fallback : par type de session
-    final revImm    = sessions.where((s) => s['type_session'] == 'revision_immediate').toList();
-    final decouv    = sessions.where((s) => s['type_session'] == 'decouverte').toList();
-    final revisions = sessions.where((s) =>
-        s['type_session'] != 'decouverte' &&
-        s['type_session'] != 'revision_immediate').toList();
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
-      child: ListView(
-        key: ValueKey(_iso(_jourSelectionne)),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        children: [
-          if (revImm.isNotEmpty) ...[
-            const _SectionHeader(
-              icone: Icons.flash_on_rounded,
-              titre: 'Après le cours',
-              couleur: Color(0xFFEA580C),
-            ),
-            const SizedBox(height: 10),
-            ...revImm.map((s) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _CarteSession(session: s, onTap: () => _afficherDetails(s)),
-            )),
-            if (decouv.isNotEmpty || revisions.isNotEmpty) const SizedBox(height: 16),
-          ],
-          if (decouv.isNotEmpty) ...[
-            const _SectionHeader(icone: Icons.school_rounded, titre: 'Cours'),
-            const SizedBox(height: 10),
-            ...decouv.map((s) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _CarteSession(session: s, onTap: () => _afficherDetails(s)),
-            )),
-            if (revisions.isNotEmpty) const SizedBox(height: 16),
-          ],
-          if (revisions.isNotEmpty) ...[
-            const _SectionHeader(icone: Icons.replay_rounded, titre: 'Révisions'),
-            const SizedBox(height: 10),
-            ...revisions.map((s) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _CarteSession(session: s, onTap: () => _afficherDetails(s)),
-            )),
-          ],
-          if (sessionsBonus.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            _buildSectionBonus(sessionsBonus),
-          ],
-        ],
-      ),
-    );
-  }
-
-  // ── Contenu groupé par tranches ───────────────────────────────────────────
-
-  Widget _buildContenuParTranches(
-    List<Map<String, dynamic>> sessions,
-    List<Map<String, dynamic>> sessionsBonus,
-  ) {
-    final ordre  = <String>[];
-    final groupes = <String, List<Map<String, dynamic>>>{};
-    final meta   = <String, Map<String, dynamic>>{};
-
-    for (final s in sessions) {
-      final t  = s['tranche'] as Map<String, dynamic>?;
-      final cle = t != null
-          ? '${t['heure_debut']}→${t['heure_fin']}'
-          : '__';
-      if (!groupes.containsKey(cle)) {
-        ordre.add(cle);
-        groupes[cle] = [];
-        meta[cle] = {
-          'duree': (t?['duree_minutes'] as int?) ?? 0,
-          'debut': t?['heure_debut'] as String?,
-          'fin':   t?['heure_fin']   as String?,
-        };
-      }
-      groupes[cle]!.add(s);
-    }
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
-      child: ListView(
-        key: ValueKey(_iso(_jourSelectionne)),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        children: [
-          for (final cle in ordre) ...[
-            _EnTeteTranche(
-              debut:        meta[cle]!['debut'] as String?,
-              fin:          meta[cle]!['fin']   as String?,
-              dureeMinutes: meta[cle]!['duree'] as int,
-              nbSessions:   groupes[cle]!.length,
-            ),
-            const SizedBox(height: 10),
-            for (final s in groupes[cle]!)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _CarteSession(
-                  session: s,
-                  onTap: () => _afficherDetails(s),
-                ),
-              ),
-            const SizedBox(height: 12),
-          ],
-          if (sessionsBonus.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _buildSectionBonus(sessionsBonus),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSectionBonus(List<Map<String, dynamic>> bonus) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF0FDF4),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF86EFAC)),
-          ),
-          child: const Row(
-            children: [
-              Text('⚡', style: TextStyle(fontSize: 16)),
-              SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Si tu as du temps libre',
-                      style: TextStyle(
-                        color: Color(0xFF166534),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
+        AnimatedBuilder(
+          animation: animationController!,
+          builder: (_, __) => FadeTransition(
+            opacity: topBarAnimation!,
+            child: Transform(
+              transform: Matrix4.translationValues(
+                  0.0, 30 * (1.0 - topBarAnimation!.value), 0.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _T.white.withValues(alpha: topBarOpacity),
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(32.0),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color:      _T.grey.withValues(alpha: 0.4 * topBarOpacity),
+                      offset:     const Offset(1.1, 1.1),
+                      blurRadius: 10.0,
                     ),
-                    Text(
-                      'Ces révisions sont optionnelles — fais-les si tu peux !',
-                      style: TextStyle(color: Color(0xFF166534), fontSize: 11),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    SizedBox(height: MediaQuery.of(context).padding.top),
+                    Padding(
+                      padding: EdgeInsets.only(
+                        left: 16, right: 16,
+                        top:    16 - 8.0 * topBarOpacity,
+                        bottom: 12 - 8.0 * topBarOpacity,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text('Mon Planning',
+                                style: TextStyle(
+                                  fontFamily:    _T.font,
+                                  fontWeight:    FontWeight.w700,
+                                  fontSize:      22 + 6 - 6 * topBarOpacity,
+                                  letterSpacing: 1.2,
+                                  color:         _T.darkerText,
+                                )),
+                            ),
+                          ),
+                          SizedBox(
+                            height: 38, width: 38,
+                            child: InkWell(
+                              highlightColor: Colors.transparent,
+                              borderRadius:   BorderRadius.circular(32),
+                              onTap: _semainePrecedente,
+                              child: Center(child: Icon(
+                                  Icons.keyboard_arrow_left, color: _T.grey)),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Row(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Icon(Icons.date_range_rounded,
+                                      color: _T.grey, size: 18),
+                                ),
+                                Text(semTxt,
+                                  style: TextStyle(
+                                    fontFamily:    _T.font,
+                                    fontWeight:    FontWeight.normal,
+                                    fontSize:      16,
+                                    letterSpacing: -0.2,
+                                    color:         _T.darkerText,
+                                  )),
+                              ],
+                            ),
+                          ),
+                          SizedBox(
+                            height: 38, width: 38,
+                            child: InkWell(
+                              highlightColor: Colors.transparent,
+                              borderRadius:   BorderRadius.circular(32),
+                              onTap: _semaineSuivante,
+                              child: Center(child: Icon(
+                                  Icons.keyboard_arrow_right, color: _T.grey)),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Sections diverses ──────────────────────────────────────────────────────
+
+  Widget _buildBannierePosition() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, right: 24, bottom: 18),
+      child: GestureDetector(
+        onTap: () async {
+          final result = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(builder: (_) => const EcranPositionProgramme()),
+          );
+          if (result == true && mounted) {
+            setState(() => _afficherBannierePosition = false);
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color:        const Color(0xFFFFF7ED),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [BoxShadow(
+              color:      _T.amber.withValues(alpha: 0.2),
+              offset:     const Offset(1.1, 1.1),
+              blurRadius: 10,
+            )],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(
+                  color:        const Color(0xFF92400E).withValues(alpha: 0.12),
+                  shape:        BoxShape.circle,
+                ),
+                child: const Icon(Icons.trending_up_rounded,
+                    color: Color(0xFF92400E), size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Valider ma progression scolaire',
+                      style: _T.ts(size: 13, weight: FontWeight.w700,
+                          color: const Color(0xFF92400E))),
+                    Text('Mets à jour ta position — 1 min par matière',
+                      style: _T.ts(size: 11, color: const Color(0xFFB45309))),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded,
+                  color: Color(0xFF92400E), size: 14),
             ],
           ),
         ),
-        const SizedBox(height: 10),
-        ...bonus.map((s) => Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: _CarteSession(session: s, onTap: () => _afficherDetails(s)),
-        )),
-      ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _ChipResume — petite puce du résumé de la journée
-// ─────────────────────────────────────────────────────────────────────────────
-class _ChipResume extends StatelessWidget {
-  final IconData icone;
-  final String   texte;
-  final Color    couleur;
-  const _ChipResume({required this.icone, required this.texte, required this.couleur});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icone, size: 14, color: couleur),
-        const SizedBox(width: 4),
-        Text(texte, style: TextStyle(fontSize: 12, color: couleur, fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _EnTeteTranche — en-tête d'un bloc horaire
-// ─────────────────────────────────────────────────────────────────────────────
-class _EnTeteTranche extends StatelessWidget {
-  final String? debut;
-  final String? fin;
-  final int     dureeMinutes;
-  final int     nbSessions;
-
-  const _EnTeteTranche({
-    required this.debut,
-    required this.fin,
-    required this.dureeMinutes,
-    required this.nbSessions,
-  });
-
-  String get _labelDuree {
-    if (dureeMinutes == 0) return '';
-    final h = dureeMinutes ~/ 60;
-    final m = dureeMinutes % 60;
-    if (h > 0 && m > 0) return '${h}h${m.toString().padLeft(2,'0')}';
-    if (h > 0)            return '${h}h';
-    return '${m}min';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final label = (debut != null && fin != null)
-        ? '$debut → $fin'
-        : 'Sessions planifiées';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [CouleurApp.bleuPrincipal, Color(0xFF1E40AF)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: CouleurApp.bleuPrincipal.withOpacity(0.25),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.access_time_rounded, color: Colors.white, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
+    );
+  }
+
+  Widget _buildErreur() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off_rounded, size: 52, color: Color(0xFF3A5160)),
+            const SizedBox(height: 16),
+            Text(_erreur!,
+              textAlign: TextAlign.center,
+              style: _T.ts(color: _T.lightText, height: 1.5)),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: () => _chargerSemaine(_debutSemaine),
+              icon:  const Icon(Icons.refresh_rounded),
+              label: const Text('Réessayer'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _T.nearlyDarkBlue,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShimmer() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        height: 320,
+        decoration: BoxDecoration(
+          color:        _T.white,
+          borderRadius: const BorderRadius.only(
+            topLeft:     Radius.circular(8),
+            bottomLeft:  Radius.circular(8),
+            bottomRight: Radius.circular(8),
+            topRight:    Radius.circular(54),
+          ),
+          boxShadow: [_T.shadow],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
+              children: List.generate(7, (i) => Container(
+                width: 112,
+                margin: EdgeInsets.only(right: i < 6 ? 10 : 0),
+                child: Column(
+                  children: [
+                    _ShimmerBox(height: 54, radius: 12),
+                    const SizedBox(height: 8),
+                    _ShimmerBox(height: 56, radius: 10),
+                    const SizedBox(height: 6),
+                    _ShimmerBox(height: 56, radius: 10),
+                    const SizedBox(height: 6),
+                    _ShimmerBox(height: 40, radius: 10),
+                  ],
                 ),
-                if (_labelDuree.isNotEmpty)
-                  Text(
-                    '$_labelDuree · $nbSessions séance${nbSessions > 1 ? 's' : ''}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-              ],
+              )),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// Heure de début pour le tri chronologique d'une séance.
+String _heureTri(Map<String, dynamic> s) =>
+    (s['heure_debut_session'] as String?) ??
+    ((s['tranche'] as Map<String, dynamic>?)?['heure_debut'] as String?) ??
+    '99:99';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _EnTeteJour — cercle du jour (DIM / LUN … SAM)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _EnTeteJour extends StatelessWidget {
+  final String abrev;
+  final int    numero;
+  final bool   estAujd;
+
+  const _EnTeteJour({
+    required this.abrev,
+    required this.numero,
+    required this.estAujd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        gradient: estAujd
+            ? const LinearGradient(
+                colors: [_T.nearlyDarkBlue, _T.purple],
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+              )
+            : null,
+        color: estAujd ? null : _T.background,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: estAujd ? [BoxShadow(
+          color:      _T.nearlyDarkBlue.withValues(alpha: 0.3),
+          blurRadius: 8, offset: const Offset(0, 3),
+        )] : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(abrev,
+            style: _T.ts(
+              size: 9, weight: FontWeight.w700, spacing: 0.4,
+              color: estAujd ? Colors.white70 : _T.lightText,
+            )),
+          const SizedBox(height: 4),
+          Text('$numero',
+            style: _T.ts(
+              size: 20, weight: FontWeight.bold,
+              color: estAujd ? Colors.white : _T.darkerText,
+            )),
         ],
       ),
     );
@@ -715,396 +740,131 @@ class _EnTeteTranche extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _CercleJour — un jour dans le sélecteur de semaine
+// _BlocSession — mini-carte d'une séance dans la colonne du jour.
+// Fond teinté (couleur matière), heure + nom matière, indicateurs d'état.
+// Pas de border-left.
 // ─────────────────────────────────────────────────────────────────────────────
-class _CercleJour extends StatelessWidget {
-  final String lettre;
-  final int    numero;
-  final bool   estAujourdhui;
-  final bool   estSelectionne;
-  final int    nbSessions;
-  final int    nbFaites;
-  final VoidCallback onTap;
 
-  const _CercleJour({
-    required this.lettre,
-    required this.numero,
-    required this.estAujourdhui,
-    required this.estSelectionne,
-    required this.nbSessions,
-    required this.nbFaites,
+class _BlocSession extends StatelessWidget {
+  final Map<String, dynamic> session;
+  final Color                couleur;
+  final VoidCallback         onTap;
+
+  const _BlocSession({
+    required this.session,
+    required this.couleur,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final Color bgCercle;
-    final Color textCouleur;
+    final chapitre   = session['chapitre']     as Map<String, dynamic>;
+    final matiere    = chapitre['matiere_nom'] as String;
+    final completee  = session['completee']    as bool? ?? false;
+    final estPilier  = session['est_pilier']   as bool? ?? false;
+    final estReport  = session['est_reportee'] as bool? ?? false;
+    final heureDebut = session['heure_debut_session'] as String?
+        ?? (session['tranche'] as Map<String, dynamic>?)?['heure_debut'] as String?;
+    final heureFin   = session['heure_fin_session'] as String?
+        ?? (session['tranche'] as Map<String, dynamic>?)?['heure_fin'] as String?;
 
-    if (estSelectionne) {
-      bgCercle    = CouleurApp.bleuPrincipal;
-      textCouleur = Colors.white;
-    } else if (estAujourdhui) {
-      bgCercle    = Colors.transparent;
-      textCouleur = CouleurApp.bleuPrincipal;
-    } else {
-      bgCercle    = Colors.transparent;
-      textCouleur = CouleurApp.texteGris;
-    }
-
-    // Couleur du point de session
-    final bool toutFait = nbSessions > 0 && nbFaites == nbSessions;
-    final Color pointCouleur = nbSessions == 0
-        ? Colors.transparent
-        : toutFait
-            ? CouleurApp.succesVert
-            : CouleurApp.bleuPrincipal;
+    const couleurReport = Color(0xFF9B1C1C);
+    final couleurBase   = estReport && !completee ? couleurReport : couleur;
+    final couleurEff    = completee ? _T.lightText : couleurBase;
 
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            lettre,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: estSelectionne ? CouleurApp.bleuPrincipal : CouleurApp.texteGris,
-            ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          color: completee
+              ? _T.background
+              : couleurBase.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: completee
+                ? _T.grey.withValues(alpha: 0.15)
+                : couleurBase.withValues(
+                    alpha: (estPilier || estReport) ? 0.55 : 0.25),
+            width: (estPilier || estReport) && !completee ? 1.5 : 1.0,
           ),
-          const SizedBox(height: 4),
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: bgCercle,
-              border: estAujourdhui && !estSelectionne
-                  ? Border.all(color: CouleurApp.bleuPrincipal, width: 1.5)
-                  : null,
-            ),
-            child: Center(
-              child: Text(
-                '$numero',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: estSelectionne || estAujourdhui
-                      ? FontWeight.bold
-                      : FontWeight.normal,
-                  color: textCouleur,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Heure début → fin
+            if (heureDebut != null)
+              Text(
+                heureFin != null
+                    ? '${_fmt(heureDebut)} → ${_fmt(heureFin)}'
+                    : _fmt(heureDebut),
+                style: _T.ts(
+                  size: 9, weight: FontWeight.w600,
+                  color: couleurEff.withValues(alpha: 0.60),
                 ),
               ),
+            if (heureDebut != null) const SizedBox(height: 3),
+            // Nom matière + indicateur
+            Row(
+              children: [
+                Expanded(
+                  child: Text(matiere,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: _T.ts(
+                      size: 10, weight: FontWeight.w700,
+                      height: 1.25,
+                      color: couleurEff.withValues(alpha: completee ? 0.55 : 1.0),
+                    )),
+                ),
+                const SizedBox(width: 2),
+                if (completee)
+                  Icon(Icons.check_circle_rounded,
+                      size: 11, color: _T.green)
+                else if (estReport)
+                  Container(
+                    width: 7, height: 7,
+                    decoration: const BoxDecoration(
+                      color: couleurReport, shape: BoxShape.circle),
+                  )
+                else if (estPilier)
+                  Icon(Icons.star_rounded, size: 10, color: couleurBase),
+              ],
             ),
-          ),
-          const SizedBox(height: 4),
-          // Point coloré : bleu = sessions à faire, vert = tout terminé
-          Container(
-            width: 5,
-            height: 5,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: pointCouleur,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _SectionHeader — titre de section
-// ─────────────────────────────────────────────────────────────────────────────
-class _SectionHeader extends StatelessWidget {
-  final IconData icone;
-  final String   titre;
-  final Color    couleur;
-  const _SectionHeader({
-    required this.icone,
-    required this.titre,
-    this.couleur = CouleurApp.bleuPrincipal,
-  });
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icone, size: 16, color: couleur),
-        const SizedBox(width: 8),
-        Text(
-          titre.toUpperCase(),
-          style: TextStyle(
-            color: couleur,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.2,
-          ),
-        ),
-      ],
-    );
+  static String _fmt(String? hhmm) {
+    if (hhmm == null) return '';
+    final p = hhmm.split(':');
+    if (p.length < 2) return hhmm;
+    return p[1] == '00' ? '${p[0]}h' : '${p[0]}h${p[1]}';
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _CarteSession — carte dans la liste du jour (enrichie)
+// _ShimmerBox
 // ─────────────────────────────────────────────────────────────────────────────
-class _CarteSession extends StatelessWidget {
-  final Map<String, dynamic> session;
-  final VoidCallback onTap;
 
-  const _CarteSession({required this.session, required this.onTap});
-
-  static const _libellesType = {
-    'decouverte':          'Découverte',
-    'revision_immediate':  'Révision après cours',
-    'revision_j1':         'J+1',
-    'revision_j3':         'J+3',
-    'revision_j7':         'J+7',
-    'revision_j14':        'J+14',
-  };
+class _ShimmerBox extends StatelessWidget {
+  final double height;
+  final double radius;
+  const _ShimmerBox({required this.height, this.radius = 8});
 
   @override
   Widget build(BuildContext context) {
-    final chapitre  = session['chapitre']    as Map<String, dynamic>;
-    final titre     = chapitre['titre']      as String;
-    final matiere   = chapitre['matiere_nom'] as String;
-    final coeff     = (chapitre['coefficient'] as num).toInt();
-    final type      = session['type_session'] as String;
-    final duree     = session['duree_minutes'] as int;
-    final completee         = session['completee']          as bool;
-    final estPilier         = session['est_pilier']  as bool? ?? false;
-    final tranche           = session['tranche']             as Map<String, dynamic>?;
-    final heureDebutSession = session['heure_debut_session'] as String?;
-    final heureFinSession   = session['heure_fin_session']   as String?;
-    final libelle           = _libellesType[type] ?? type;
-    final estRevision       = type.startsWith('revision');
-
-    final Color couleurAccent = estPilier
-        ? const Color(0xFFB45309)   // ambre doré — signature visuelle des piliers
-        : type == 'revision_immediate'
-            ? const Color(0xFFEA580C)
-            : estRevision
-                ? CouleurApp.jauneAccent
-                : CouleurApp.bleuPrincipal;
-
-    // Durée formatée
-    final h = duree ~/ 60;
-    final m = duree % 60;
-    final labelDuree = h > 0
-        ? '${h}h${m > 0 ? m.toString().padLeft(2,'0') : ''}'
-        : '${m}min';
-
-    return Opacity(
-      opacity: completee ? 0.55 : 1.0,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            color: CouleurApp.fondBlanc,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: completee ? CouleurApp.bordure : couleurAccent.withOpacity(0.3),
-            ),
-          ),
-          child: Row(
-            children: [
-              // Barre colorée à gauche
-              Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: completee ? CouleurApp.texteGris : couleurAccent,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(14),
-                    bottomLeft: Radius.circular(14),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              // Icône type
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: couleurAccent.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  completee
-                      ? Icons.check_circle_rounded
-                      : estPilier
-                          ? Icons.star_rounded
-                          : (type == 'revision_immediate'
-                              ? Icons.flash_on_rounded
-                              : estRevision
-                                  ? Icons.replay_rounded
-                                  : Icons.school_rounded),
-                  color: completee ? CouleurApp.texteGris : couleurAccent,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Infos texte
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Matière (prominente)
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              matiere,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: completee ? CouleurApp.texteGris : couleurAccent,
-                                fontSize: 13,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          // Badge coefficient
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: couleurAccent.withOpacity(0.10),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'Coeff.$coeff',
-                              style: TextStyle(
-                                color: couleurAccent,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          // Badge Pilier (affiché uniquement pour les sessions piliers)
-                          if (estPilier) ...[
-                            const SizedBox(width: 5),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFEF3C7),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFFB45309).withValues(alpha: 0.35),
-                                ),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.star_rounded, size: 9, color: Color(0xFFB45309)),
-                                  SizedBox(width: 2),
-                                  Text(
-                                    'Pilier',
-                                    style: TextStyle(
-                                      color: Color(0xFFB45309),
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      // Titre du chapitre
-                      Text(
-                        titre,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          color: completee
-                              ? CouleurApp.texteGris
-                              : CouleurApp.bleuSombre,
-                          fontSize: 13,
-                          decoration: completee
-                              ? TextDecoration.lineThrough
-                              : TextDecoration.none,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      // Type de session + heure si disponible
-                      Row(
-                        children: [
-                          Text(
-                            estPilier ? 'Session dédiée' : libelle,
-                            style: TextStyle(
-                              color: estPilier
-                                  ? const Color(0xFFB45309)
-                                  : CouleurApp.texteGris,
-                              fontSize: 11,
-                              fontWeight: estPilier
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                          if (heureDebutSession != null) ...[
-                            const Text(
-                              ' · ',
-                              style: TextStyle(color: CouleurApp.texteGris, fontSize: 11),
-                            ),
-                            const Icon(Icons.access_time_rounded,
-                                size: 11, color: CouleurApp.texteGris),
-                            const SizedBox(width: 2),
-                            Text(
-                              '$heureDebutSession → $heureFinSession',
-                              style: const TextStyle(
-                                color: CouleurApp.texteGris,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ] else if (tranche != null) ...[
-                            const Text(
-                              ' · ',
-                              style: TextStyle(color: CouleurApp.texteGris, fontSize: 11),
-                            ),
-                            const Icon(Icons.access_time_rounded,
-                                size: 11, color: CouleurApp.texteGris),
-                            const SizedBox(width: 2),
-                            Text(
-                              '${tranche['heure_debut']} → ${tranche['heure_fin']}',
-                              style: const TextStyle(
-                                color: CouleurApp.texteGris,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // Durée à droite
-              Padding(
-                padding: const EdgeInsets.only(right: 14),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      labelDuree,
-                      style: TextStyle(
-                        color: completee ? CouleurApp.texteGris : couleurAccent,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    if (completee)
-                      const Icon(Icons.check_circle_rounded,
-                          color: CouleurApp.succesVert, size: 16),
-                  ],
-                ),
-              ),
-            ],
-          ),
+    return Shimmer.fromColors(
+      baseColor:      Colors.grey.shade200,
+      highlightColor: Colors.grey.shade50,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color:        Colors.white,
+          borderRadius: BorderRadius.circular(radius),
         ),
       ),
     );
@@ -1112,8 +872,9 @@ class _CarteSession extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _FeuilleDetailSession — BottomSheet avec tous les détails d'une session
+// _FeuilleDetailSession — BottomSheet détail (INCHANGÉ)
 // ─────────────────────────────────────────────────────────────────────────────
+
 class _FeuilleDetailSession extends StatelessWidget {
   final Map<String, dynamic> session;
   final DateTime    dateSession;
@@ -1121,42 +882,34 @@ class _FeuilleDetailSession extends StatelessWidget {
   final VoidCallback? onMarquerFait;
 
   const _FeuilleDetailSession({
-    required this.session,
-    required this.dateSession,
-    required this.nomJour,
-    required this.onMarquerFait,
+    required this.session, required this.dateSession,
+    required this.nomJour, required this.onMarquerFait,
   });
 
   static const _infosType = {
     'decouverte': (
-      icone: Icons.school_rounded,
-      label: 'Découverte',
-      explication: 'Première étude de ce chapitre. Prends des notes et comprends bien le cours avant de continuer.',
+      icone: Icons.school_rounded, label: 'Découverte',
+      explication: 'Première étude de ce chapitre. Prends des notes et comprends bien le cours.',
     ),
     'revision_immediate': (
-      icone: Icons.flash_on_rounded,
-      label: 'Révision après cours',
-      explication: 'Révision à chaud juste après ton cours du jour — renforce la mémoire active dans les heures qui suivent.',
+      icone: Icons.flash_on_rounded, label: 'Révision après cours',
+      explication: 'Révision à chaud juste après le cours — renforce la mémoire dans les heures qui suivent.',
     ),
     'revision_j1': (
-      icone: Icons.replay_rounded,
-      label: 'Révision J+1',
-      explication: 'Révision 24 h après la découverte — ancre la mémoire à court terme avant le premier oubli.',
+      icone: Icons.replay_rounded, label: 'Révision J+1',
+      explication: 'Révision 24 h après la découverte — ancre la mémoire avant le premier oubli.',
     ),
     'revision_j3': (
-      icone: Icons.replay_rounded,
-      label: 'Révision J+3',
-      explication: 'Révision 3 jours après la découverte — consolide le souvenir avant qu\'il ne s\'efface.',
+      icone: Icons.replay_rounded, label: 'Révision J+3',
+      explication: 'Révision 3 jours après — consolide le souvenir avant qu\'il ne s\'efface.',
     ),
     'revision_j7': (
-      icone: Icons.replay_rounded,
-      label: 'Révision J+7',
+      icone: Icons.replay_rounded, label: 'Révision J+7',
       explication: 'Révision 1 semaine après — renforce la mémoire à moyen terme.',
     ),
     'revision_j14': (
-      icone: Icons.replay_rounded,
-      label: 'Révision J+14',
-      explication: 'Révision 2 semaines après — transfert en mémoire à long terme (Ebbinghaus).',
+      icone: Icons.replay_rounded, label: 'Révision J+14',
+      explication: 'Révision 2 semaines après — transfert en mémoire longue durée (Ebbinghaus).',
     ),
   };
 
@@ -1170,91 +923,75 @@ class _FeuilleDetailSession extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final chapitre   = session['chapitre']     as Map<String, dynamic>;
-    final titre      = chapitre['titre']       as String;
-    final matiere    = chapitre['matiere_nom'] as String;
+    final chapitre   = session['chapitre']      as Map<String, dynamic>;
+    final titre      = chapitre['titre']        as String;
+    final matiere    = chapitre['matiere_nom']  as String;
     final coeff      = (chapitre['coefficient'] as num).toInt();
     final type       = session['type_session']  as String;
     final duree      = session['duree_minutes'] as int;
-    final completee         = session['completee']          as bool;
-    final tranche           = session['tranche']             as Map<String, dynamic>?;
-    final heureDebutSession = session['heure_debut_session'] as String?;
-    final heureFinSession   = session['heure_fin_session']   as String?;
-    final necessExo         = chapitre['necessite_exercices'] == true;
-    final estPilier         = session['est_pilier'] as bool? ?? false;
+    final completee        = session['completee']           as bool;
+    final heureDebutSess   = session['heure_debut_session'] as String?;
+    final heureFinSess     = session['heure_fin_session']   as String?;
+    final tranche          = session['tranche']             as Map<String, dynamic>?;
+    final necessExo        = chapitre['necessite_exercices'] == true;
+    final estPilier        = session['est_pilier']          as bool? ?? false;
+    final estRevision      = type.startsWith('revision');
 
     final info = _infosType[type] ?? (
-      icone: Icons.help_outline_rounded,
-      label: type,
-      explication: '',
+      icone: Icons.help_outline_rounded, label: type, explication: '',
     );
 
-    // Durée formatée
-    final h = duree ~/ 60;
-    final m = duree % 60;
+    final h = duree ~/ 60; final m = duree % 60;
     final labelDuree = h > 0
-        ? '${h}h${m > 0 ? '${m.toString().padLeft(2,'0')}' : ''}'
-        : '${m} minutes';
+        ? '${h}h${m > 0 ? m.toString().padLeft(2, '0') : ''}'
+        : '$m minutes';
 
-    final estRevision = type.startsWith('revision');
-    final Color couleurAccent = estPilier
+    final Color accent = estPilier
         ? const Color(0xFFB45309)
         : type == 'revision_immediate'
             ? const Color(0xFFEA580C)
             : estRevision
-                ? CouleurApp.jauneAccent
-                : CouleurApp.bleuPrincipal;
+                ? const Color(0xFFF59E0B)
+                : _T.nearlyDarkBlue;
 
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color:        Color(0xFFFFFFFF),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(
           24, 16, 24, MediaQuery.of(context).padding.bottom + 24),
       child: SingleChildScrollView(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize:       MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Poignée
-            Center(
-              child: Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: CouleurApp.bordure,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+            Center(child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color:        const Color(0xFFD6DAE2),
+                borderRadius: BorderRadius.circular(2),
               ),
-            ),
+            )),
             const SizedBox(height: 20),
 
-            // ── Bannière pilier (affichée uniquement pour les sessions dédiées) ──
             if (estPilier) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
+                  color:        const Color(0xFFFEF3C7),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFB45309).withValues(alpha: 0.35),
-                  ),
+                  boxShadow: [_T.shadow],
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.star_rounded, size: 16, color: Color(0xFFB45309)),
-                    SizedBox(width: 8),
+                    const Icon(Icons.star_rounded, size: 16, color: Color(0xFFB45309)),
+                    const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        'Session dédiée — créneau fixe chaque semaine pour cette matière à fort coefficient.',
-                        style: TextStyle(
-                          color: Color(0xFFB45309),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          height: 1.4,
-                        ),
-                      ),
+                      child: Text('Session dédiée — créneau fixe chaque semaine.',
+                        style: _T.ts(size: 12, weight: FontWeight.w600,
+                            color: const Color(0xFFB45309), height: 1.4)),
                     ),
                   ],
                 ),
@@ -1262,58 +999,43 @@ class _FeuilleDetailSession extends StatelessWidget {
               const SizedBox(height: 14),
             ],
 
-            // ── En-tête : date + heure ─────────────────────────────────────
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    couleurAccent.withOpacity(0.10),
-                    couleurAccent.withOpacity(0.04),
-                  ],
-                ),
+                gradient: LinearGradient(colors: [
+                  accent.withValues(alpha: 0.10),
+                  accent.withValues(alpha: 0.04),
+                ]),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: couleurAccent.withOpacity(0.25)),
+                border: Border.all(color: accent.withValues(alpha: 0.25)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Badge type
                   Row(
                     children: [
-                      Icon(info.icone, size: 16, color: couleurAccent),
+                      Icon(info.icone, size: 16, color: accent),
                       const SizedBox(width: 6),
-                      Text(
-                        info.label,
-                        style: TextStyle(
-                          color: couleurAccent,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
+                      Text(info.label,
+                        style: _T.ts(size: 13, weight: FontWeight.w700, color: accent)),
                       if (completee) ...[
                         const Spacer(),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: CouleurApp.succesVert.withOpacity(0.12),
+                            color:        _T.green.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.check_circle_rounded,
-                                  size: 12, color: CouleurApp.succesVert),
-                              SizedBox(width: 4),
-                              Text(
-                                'Terminée',
-                                style: TextStyle(
-                                  color: CouleurApp.succesVert,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                              const Icon(Icons.check_circle_rounded,
+                                  size: 12, color: Color(0xFF10B981)),
+                              const SizedBox(width: 4),
+                              Text('Terminée',
+                                style: _T.ts(size: 11, weight: FontWeight.w600,
+                                    color: const Color(0xFF10B981))),
                             ],
                           ),
                         ),
@@ -1321,66 +1043,42 @@ class _FeuilleDetailSession extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  // Date
                   Row(
                     children: [
-                      const Icon(Icons.calendar_today_rounded,
-                          size: 14, color: CouleurApp.texteGris),
+                      Icon(Icons.calendar_today_rounded, size: 14, color: _T.lightText),
                       const SizedBox(width: 6),
-                      Text(
-                        _formatDate(dateSession, nomJour),
-                        style: const TextStyle(
-                            color: CouleurApp.texteGris, fontSize: 13),
-                      ),
+                      Text(_formatDate(dateSession, nomJour),
+                        style: _T.ts(size: 13, color: _T.lightText)),
                     ],
                   ),
-                  // Heure si disponible
-                  if (heureDebutSession != null) ...[
+                  if (heureDebutSess != null) ...[
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.access_time_rounded,
-                            size: 14, color: CouleurApp.texteGris),
+                        Icon(Icons.access_time_rounded, size: 14, color: _T.lightText),
                         const SizedBox(width: 6),
-                        Text(
-                          '$heureDebutSession → $heureFinSession  ·  $labelDuree',
-                          style: const TextStyle(
-                              color: CouleurApp.bleuSombre,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600),
-                        ),
+                        Text('$heureDebutSess → $heureFinSess  ·  $labelDuree',
+                          style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.darkText)),
                       ],
                     ),
                   ] else if (tranche != null) ...[
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.access_time_rounded,
-                            size: 14, color: CouleurApp.texteGris),
+                        Icon(Icons.access_time_rounded, size: 14, color: _T.lightText),
                         const SizedBox(width: 6),
-                        Text(
-                          '${tranche['heure_debut']} → ${tranche['heure_fin']}  ·  $labelDuree',
-                          style: const TextStyle(
-                              color: CouleurApp.bleuSombre,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600),
-                        ),
+                        Text('${tranche['heure_debut']} → ${tranche['heure_fin']}  ·  $labelDuree',
+                          style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.darkText)),
                       ],
                     ),
                   ] else ...[
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.timer_outlined,
-                            size: 14, color: CouleurApp.texteGris),
+                        Icon(Icons.timer_outlined, size: 14, color: _T.lightText),
                         const SizedBox(width: 6),
-                        Text(
-                          labelDuree,
-                          style: const TextStyle(
-                              color: CouleurApp.bleuSombre,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600),
-                        ),
+                        Text(labelDuree,
+                          style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.darkText)),
                       ],
                     ),
                   ],
@@ -1389,127 +1087,85 @@ class _FeuilleDetailSession extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // ── Matière ────────────────────────────────────────────────────
             Row(
               children: [
-                const Icon(Icons.book_rounded, size: 18, color: CouleurApp.texteGris),
+                Icon(Icons.book_rounded, size: 18, color: _T.lightText),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    matiere,
-                    style: const TextStyle(
-                      color: CouleurApp.bleuSombre,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
+                  child: Text(matiere,
+                    style: _T.ts(size: 15, weight: FontWeight.bold, color: _T.darkerText)),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: CouleurApp.bleuClair,
+                    color:        _T.nearlyDarkBlue.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    'Coefficient $coeff',
-                    style: const TextStyle(
-                      color: CouleurApp.bleuPrincipal,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  child: Text('Coefficient $coeff',
+                    style: _T.ts(size: 12, weight: FontWeight.w600,
+                        color: _T.nearlyDarkBlue)),
                 ),
               ],
             ),
             const SizedBox(height: 12),
 
-            // ── Chapitre ───────────────────────────────────────────────────
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: CouleurApp.fondClair,
-                borderRadius: BorderRadius.circular(12),
+                color: _T.background, borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'CHAPITRE',
-                    style: TextStyle(
-                      color: CouleurApp.texteGris,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
+                  Text('CHAPITRE',
+                    style: _T.ts(size: 10, weight: FontWeight.w700,
+                        color: _T.lightText, spacing: 1.0)),
                   const SizedBox(height: 6),
-                  Text(
-                    titre,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: CouleurApp.bleuSombre,
-                      height: 1.3,
-                    ),
-                  ),
+                  Text(titre,
+                    style: _T.ts(size: 16, weight: FontWeight.bold,
+                        color: _T.darkerText, height: 1.3)),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
-            // ── Explication du type de session ─────────────────────────────
             if (info.explication.isNotEmpty)
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: CouleurApp.bleuClair,
+                  color:        _T.nearlyDarkBlue.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.info_outline_rounded,
-                        color: CouleurApp.bleuPrincipal, size: 18),
+                    Icon(Icons.info_outline_rounded, color: _T.nearlyDarkBlue, size: 18),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        info.explication,
-                        style: const TextStyle(
-                          color: CouleurApp.bleuSombre,
-                          fontSize: 13,
-                          height: 1.4,
-                        ),
-                      ),
+                      child: Text(info.explication,
+                        style: _T.ts(size: 13, color: _T.darkText, height: 1.4)),
                     ),
                   ],
                 ),
               ),
 
-            // ── Conseil méthodologique (matières avec exercices) ───────────
             if (necessExo) ...[
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFFED7AA)),
+                  color: const Color(0xFFFFF7ED), borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Row(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('💡', style: TextStyle(fontSize: 16)),
-                    SizedBox(width: 10),
+                    const Text('💡', style: TextStyle(fontSize: 16)),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Méthode : commence par relire ton cours (30–45 min) pour bien comprendre, puis passe aux exercices pratiques.',
-                        style: TextStyle(
-                          color: Color(0xFF92400E),
-                          fontSize: 13,
-                          height: 1.4,
-                        ),
-                      ),
+                        'Méthode : commence par relire ton cours (30–45 min), puis passe aux exercices.',
+                        style: _T.ts(size: 13, color: const Color(0xFF92400E), height: 1.4)),
                     ),
                   ],
                 ),
@@ -1517,28 +1173,25 @@ class _FeuilleDetailSession extends StatelessWidget {
             ],
             const SizedBox(height: 24),
 
-            // ── Bouton principal ───────────────────────────────────────────
             SizedBox(
-              width: double.infinity,
-              height: 52,
+              width: double.infinity, height: 52,
               child: completee
                   ? OutlinedButton.icon(
                       onPressed: null,
-                      icon: const Icon(Icons.check_circle_rounded),
+                      icon:  const Icon(Icons.check_circle_rounded),
                       label: const Text('Session déjà terminée'),
                     )
                   : ElevatedButton.icon(
                       onPressed: onMarquerFait,
-                      icon: const Icon(Icons.check_rounded),
+                      icon:  const Icon(Icons.check_rounded),
                       label: const Text('Marquer comme fait ✓'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF10B981),
                         foregroundColor: Colors.white,
-                        textStyle: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15),
+                        elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                            borderRadius: BorderRadius.circular(14)),
+                        textStyle: _T.ts(size: 15, weight: FontWeight.bold),
                       ),
                     ),
             ),

@@ -5,7 +5,49 @@ import 'package:flutter/material.dart';
 import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
-import '../../noyau/theme.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Thème — FitnessAppTheme (même palette que l'accueil / le planning)
+// ─────────────────────────────────────────────────────────────────────────────
+
+abstract class _T {
+  static const Color background     = Color(0xFFF2F3F8);
+  static const Color white          = Color(0xFFFFFFFF);
+  static const Color nearlyDarkBlue = Color(0xFF2633C5);
+  static const Color grey           = Color(0xFF3A5160);
+  static const Color darkText       = Color(0xFF253840);
+  static const Color darkerText     = Color(0xFF17262A);
+  static const Color lightText      = Color(0xFF4A6572);
+  static const Color amber          = Color(0xFFD97706);
+  static const Color purple         = Color(0xFF6F56E8);
+  static const String font          = 'WorkSans';
+
+  static BoxShadow get shadow => BoxShadow(
+    color:      grey.withValues(alpha: 0.2),
+    offset:     const Offset(1.1, 1.1),
+    blurRadius: 10.0,
+  );
+
+  static TextStyle ts({
+    double size = 14,
+    FontWeight weight = FontWeight.w400,
+    Color? color,
+    double spacing = 0.0,
+    double? height,
+  }) =>
+      TextStyle(
+        fontFamily:    font,
+        fontSize:      size,
+        fontWeight:    weight,
+        letterSpacing: spacing,
+        color:         color ?? darkText,
+        height:        height,
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EcranDecalerSession — repousse l'heure de début (LOGIQUE INCHANGÉE)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class EcranDecalerSession extends StatefulWidget {
   final Map<String, dynamic> session;
@@ -36,6 +78,8 @@ class _EcranDecalerSessionState extends State<EcranDecalerSession> {
     super.initState();
     _charger();
   }
+
+  // ── Appels réseau (INCHANGÉS) ──────────────────────────────────────────────────
 
   Future<void> _charger() async {
     final id  = widget.session['id'] as int;
@@ -93,7 +137,7 @@ class _EcranDecalerSessionState extends State<EcranDecalerSession> {
     }
   }
 
-  // ── build ──────────────────────────────────────────────────────────────────
+  // ── build (REFONTE TEMPLATE) ───────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -101,20 +145,24 @@ class _EcranDecalerSessionState extends State<EcranDecalerSession> {
     final matiere  = chapitre['matiere_nom'] as String;
     final titre    = chapitre['titre'] as String;
 
-    return Scaffold(
-      backgroundColor: CouleurApp.fondClair,
-      appBar: AppBar(
-        title: const Text('Décaler la séance'),
-        backgroundColor: CouleurApp.fondBlanc,
-        elevation: 0,
-        foregroundColor: CouleurApp.bleuSombre,
-        surfaceTintColor: Colors.transparent,
+    return Container(
+      color: _T.background,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Column(
+          children: [
+            _EnTeteEcran(titre: 'Décaler la séance'),
+            Expanded(
+              child: _chargement
+                  ? const Center(
+                      child: CircularProgressIndicator(color: _T.nearlyDarkBlue))
+                  : _erreur != null
+                      ? _buildErreur()
+                      : _buildContenu(matiere, titre),
+            ),
+          ],
+        ),
       ),
-      body: _chargement
-          ? const Center(child: CircularProgressIndicator())
-          : _erreur != null
-              ? _buildErreur()
-              : _buildContenu(matiere, titre),
     );
   }
 
@@ -125,14 +173,11 @@ class _EcranDecalerSessionState extends State<EcranDecalerSession> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline_rounded,
-                size: 48, color: CouleurApp.texteGris),
+            const Icon(Icons.error_outline_rounded, size: 48, color: _T.lightText),
             const SizedBox(height: 16),
-            Text(
-              _erreur!,
+            Text(_erreur!,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: CouleurApp.texteGris, fontSize: 14),
-            ),
+              style: _T.ts(size: 14, color: _T.lightText, height: 1.5)),
           ],
         ),
       ),
@@ -152,64 +197,39 @@ class _EcranDecalerSessionState extends State<EcranDecalerSession> {
     }
     final heureAffichee  = heureChoisie ?? _heureActuelle;
     final heureModifiee  = heureChoisie != null && heureChoisie != _heureActuelle;
+    final accent         = heureModifiee ? _T.amber : _T.nearlyDarkBlue;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Carte de la session ──────────────────────────────────────────
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color:        CouleurApp.fondBlanc,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: heureModifiee
-                    ? const Color(0xFFD97706).withValues(alpha: 0.50)
-                    : CouleurApp.bordure,
-                width: heureModifiee ? 1.5 : 1.0,
-              ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+      children: [
+        // ── Carte de la session (hero, sans border-left) ──────────────────────
+        Container(
+          decoration: BoxDecoration(
+            color:        _T.white,
+            borderRadius: const BorderRadius.only(
+              topLeft:     Radius.circular(8),
+              bottomLeft:  Radius.circular(8),
+              bottomRight: Radius.circular(8),
+              topRight:    Radius.circular(54),
             ),
+            boxShadow: [_T.shadow],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Container(
-                  width: 4, height: 44,
-                  decoration: BoxDecoration(
-                    color: heureModifiee
-                        ? const Color(0xFFD97706)
-                        : CouleurApp.bleuPrincipal,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        matiere,
-                        style: TextStyle(
-                          color: heureModifiee
-                              ? const Color(0xFFD97706)
-                              : CouleurApp.bleuPrincipal,
-                          fontSize:   11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        titre,
-                        style: const TextStyle(
-                          color:      CouleurApp.bleuSombre,
-                          fontSize:   14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(matiere.toUpperCase(),
+                        style: _T.ts(size: 11, weight: FontWeight.w700,
+                            spacing: 0.5, color: accent)),
+                      const SizedBox(height: 3),
+                      Text(titre,
+                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: _T.ts(size: 15, weight: FontWeight.w600,
+                            color: _T.darkerText, height: 1.2)),
                     ],
                   ),
                 ),
@@ -218,146 +238,94 @@ class _EcranDecalerSessionState extends State<EcranDecalerSession> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                        heureModifiee ? 'Nouveau départ' : 'Prévue à',
-                        style: TextStyle(
-                          color: heureModifiee
-                              ? const Color(0xFFD97706)
-                              : CouleurApp.texteGris,
-                          fontSize: 11,
-                          fontWeight: heureModifiee
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
-                      ),
+                      Text(heureModifiee ? 'Nouveau départ' : 'Prévue à',
+                        style: _T.ts(size: 11,
+                            weight: heureModifiee ? FontWeight.w600 : FontWeight.normal,
+                            color: heureModifiee ? _T.amber : _T.lightText)),
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
                         transitionBuilder: (child, anim) =>
                             FadeTransition(opacity: anim, child: child),
-                        child: Text(
-                          heureAffichee,
+                        child: Text(heureAffichee,
                           key: ValueKey(heureAffichee),
-                          style: TextStyle(
-                            color: heureModifiee
-                                ? const Color(0xFFD97706)
-                                : CouleurApp.bleuSombre,
-                            fontSize:   18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                          style: _T.ts(size: 18, weight: FontWeight.bold, color: accent)),
                       ),
                       if (_heureActuelle != null && heureModifiee)
-                        Text(
-                          'au lieu de $_heureActuelle',
-                          style: const TextStyle(
-                            color:    CouleurApp.texteGris,
-                            fontSize: 10,
-                          ),
-                        ),
+                        Text('au lieu de $_heureActuelle',
+                          style: _T.ts(size: 10, color: _T.lightText)),
                     ],
                   ),
                 ],
               ],
             ),
           ),
-          const SizedBox(height: 28),
+        ),
+        const SizedBox(height: 26),
 
-          // ── Question ─────────────────────────────────────────────────────
-          const Text(
-            'De combien repousser le début ?',
-            style: TextStyle(
-              color:      CouleurApp.bleuSombre,
-              fontSize:   16,
-              fontWeight: FontWeight.bold,
+        // ── Question ──────────────────────────────────────────────────────────
+        Text('De combien repousser le début ?',
+          style: _T.ts(size: 16, weight: FontWeight.bold, color: _T.darkerText)),
+        const SizedBox(height: 6),
+        Text('Choisis quand tu pourras te mettre au travail.',
+          style: _T.ts(size: 13, color: _T.lightText)),
+        const SizedBox(height: 18),
+
+        // ── Options de décalage ────────────────────────────────────────────────
+        Wrap(
+          spacing:    10,
+          runSpacing: 10,
+          children:   _options.map((o) => _TuileDecalage(
+            minutes:    o['minutes']       as int,
+            heureNew:   o['nouvelle_heure'] as String?,
+            choisi:     _minutesChoisis == o['minutes'] as int,
+            onTap:      () => setState(() => _minutesChoisis = o['minutes'] as int),
+          )).toList(),
+        ),
+        const SizedBox(height: 22),
+
+        // ── Avertissement cascade ───────────────────────────────────────────────
+        if (_nbImpactes > 0)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color:        const Color(0xFFFFF7ED),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [BoxShadow(
+                color:      _T.amber.withValues(alpha: 0.2),
+                offset:     const Offset(1.1, 1.1),
+                blurRadius: 10,
+              )],
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline_rounded, color: _T.amber, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '$_nbImpactes autre${_nbImpactes > 1 ? 's séances seront décalées' : ' séance sera décalée'} '
+                    'en cascade dans la même tranche horaire.',
+                    style: _T.ts(size: 13, color: const Color(0xFF92400E), height: 1.4)),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 6),
-          const Text(
-            'Choisis quand tu pourras te mettre au travail.',
-            style: TextStyle(color: CouleurApp.texteGris, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
+        const SizedBox(height: 28),
 
-          // ── Options de décalage ───────────────────────────────────────────
-          Wrap(
-            spacing:    10,
-            runSpacing: 10,
-            children:   _options.map((o) => _TuileDecalage(
-              minutes:    o['minutes']       as int,
-              heureNew:   o['nouvelle_heure'] as String?,
-              choisi:     _minutesChoisis == o['minutes'] as int,
-              onTap:      () => setState(() => _minutesChoisis = o['minutes'] as int),
-            )).toList(),
-          ),
-          const SizedBox(height: 20),
-
-          // ── Avertissement cascade ─────────────────────────────────────────
-          if (_nbImpactes > 0)
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color:        const Color(0xFFFEF3C7),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFBBF24)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.info_outline_rounded,
-                      color: Color(0xFFD97706), size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '$_nbImpactes autre${_nbImpactes > 1 ? 's séances seront décalées' : ' séance sera décalée'} '
-                      'en cascade dans la même tranche horaire.',
-                      style: const TextStyle(
-                        color:    Color(0xFF92400E),
-                        fontSize: 13,
-                        height:   1.4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          const Spacer(),
-
-          // ── Bouton confirmer ───────────────────────────────────────────────
-          SizedBox(
-            width:  double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              onPressed: _minutesChoisis != null && !_envoi ? _confirmer : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: CouleurApp.bleuPrincipal,
-                disabledBackgroundColor: CouleurApp.bordure,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              child: _envoi
-                  ? const SizedBox(
-                      width: 22, height: 22,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2.5),
-                    )
-                  : const Text(
-                      'Confirmer le décalage',
-                      style: TextStyle(
-                        fontSize:   15,
-                        fontWeight: FontWeight.w600,
-                        color:      Colors.white,
-                      ),
-                    ),
-            ),
-          ),
-        ],
-      ),
+        // ── Bouton confirmer ────────────────────────────────────────────────────
+        _BoutonPrincipal(
+          label:   _envoi ? 'Décalage en cours…' : 'Confirmer le décalage',
+          enCours: _envoi,
+          onTap:   _minutesChoisis != null && !_envoi ? _confirmer : null,
+        ),
+      ],
     );
   }
 }
 
-// ── Tuile option de décalage ──────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _TuileDecalage — chip d'option (sélection pleine, pas de border-left)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _TuileDecalage extends StatelessWidget {
   final int     minutes;
@@ -381,43 +349,142 @@ class _TuileDecalage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        decoration: BoxDecoration(
-          color:        choisi ? CouleurApp.bleuPrincipal : CouleurApp.fondBlanc,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: choisi ? CouleurApp.bleuPrincipal : CouleurApp.bordure,
-            width: choisi ? 2.0 : 1.0,
+    return Material(
+      color: choisi ? _T.nearlyDarkBlue : _T.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: choisi ? null : [_T.shadow],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_label,
+                style: _T.ts(size: 15, weight: FontWeight.bold,
+                    color: choisi ? Colors.white : _T.darkerText)),
+              if (heureNew != null) ...[
+                const SizedBox(height: 3),
+                Text('→ $heureNew',
+                  style: _T.ts(size: 11,
+                      color: choisi ? Colors.white.withValues(alpha: 0.8) : _T.lightText)),
+              ],
+            ],
           ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _label,
-              style: TextStyle(
-                color:      choisi ? Colors.white : CouleurApp.bleuSombre,
-                fontWeight: FontWeight.bold,
-                fontSize:   15,
-              ),
-            ),
-            if (heureNew != null) ...[
-              const SizedBox(height: 3),
-              Text(
-                '→ $heureNew',
-                style: TextStyle(
-                  color: choisi
-                      ? Colors.white.withValues(alpha: 0.80)
-                      : CouleurApp.texteGris,
-                  fontSize: 11,
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// En-tête d'écran — style template (barre blanche, coin bottomLeft arrondi)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _EnTeteEcran extends StatelessWidget {
+  final String titre;
+  const _EnTeteEcran({required this.titre});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _T.white,
+        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(32)),
+        boxShadow: [BoxShadow(
+          color:      _T.grey.withValues(alpha: 0.20),
+          offset:     const Offset(1.1, 1.1),
+          blurRadius: 10,
+        )],
+      ),
+      child: Column(
+        children: [
+          SizedBox(height: MediaQuery.of(context).padding.top),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 16, 12),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 44, height: 44,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(32),
+                    highlightColor: Colors.transparent,
+                    onTap: () => Navigator.pop(context),
+                    child: const Center(
+                      child: Icon(Icons.arrow_back_rounded, color: _T.grey)),
+                  ),
                 ),
-              ),
-            ],
-          ],
+                Expanded(
+                  child: Text(titre,
+                    style: _T.ts(size: 22, weight: FontWeight.w700,
+                        spacing: 0.6, color: _T.darkerText)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _BoutonPrincipal — CTA plein largeur (style template)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BoutonPrincipal extends StatelessWidget {
+  final String       label;
+  final bool         enCours;
+  final VoidCallback? onTap;
+
+  const _BoutonPrincipal({
+    required this.label,
+    required this.enCours,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final actif = onTap != null;
+    return SizedBox(
+      height: 52,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: actif
+              ? const LinearGradient(
+                  colors: [_T.nearlyDarkBlue, _T.purple],
+                  begin: Alignment.topLeft, end: Alignment.bottomRight,
+                )
+              : null,
+          color: actif ? null : _T.grey.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: actif ? [BoxShadow(
+            color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
+            offset:     const Offset(0, 6),
+            blurRadius: 14,
+          )] : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Center(
+              child: enCours
+                  ? const SizedBox(
+                      width: 22, height: 22,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2.5))
+                  : Text(label,
+                      style: _T.ts(size: 15, weight: FontWeight.w700,
+                          color: actif ? Colors.white : _T.lightText)),
+            ),
+          ),
         ),
       ),
     );

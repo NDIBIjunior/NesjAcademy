@@ -389,7 +389,7 @@ class _TabIconWidgetState extends State<_TabIconWidget>
                   child: Icon(
                     widget.selected ? widget.selectedIcon : widget.icon,
                     color:  widget.selected ? _T.nearlyDarkBlue : _T.grey,
-                    size:   22,
+                    size:   28,
                   ),
                 ),
                 // Bulle principale (haut gauche)

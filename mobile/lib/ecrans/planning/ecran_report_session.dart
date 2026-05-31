@@ -5,12 +5,50 @@ import 'package:flutter/material.dart';
 import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
-import '../../noyau/theme.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Thème — FitnessAppTheme (même palette que l'accueil / le planning)
+// ─────────────────────────────────────────────────────────────────────────────
+
+abstract class _T {
+  static const Color background     = Color(0xFFF2F3F8);
+  static const Color white          = Color(0xFFFFFFFF);
+  static const Color nearlyDarkBlue = Color(0xFF2633C5);
+  static const Color grey           = Color(0xFF3A5160);
+  static const Color darkText       = Color(0xFF253840);
+  static const Color darkerText     = Color(0xFF17262A);
+  static const Color lightText      = Color(0xFF4A6572);
+  static const Color green          = Color(0xFF2D8B5E);
+  static const Color purple         = Color(0xFF6F56E8);
+  static const String font          = 'WorkSans';
+
+  static BoxShadow get shadow => BoxShadow(
+    color:      grey.withValues(alpha: 0.2),
+    offset:     const Offset(1.1, 1.1),
+    blurRadius: 10.0,
+  );
+
+  static TextStyle ts({
+    double size = 14,
+    FontWeight weight = FontWeight.w400,
+    Color? color,
+    double spacing = 0.0,
+    double? height,
+  }) =>
+      TextStyle(
+        fontFamily:    font,
+        fontSize:      size,
+        fontWeight:    weight,
+        letterSpacing: spacing,
+        color:         color ?? darkText,
+        height:        height,
+      );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EcranReportSession — version "Option A + suggestion intelligente"
 //
-// Flux UX :
+// Flux UX (LOGIQUE INCHANGÉE) :
 //   1. Chargement : GET /sessions/{id}/reporter/ → suggestion du meilleur jour
 //   2. L'élève accepte la suggestion OU choisit sa propre date (J+1 à J+7)
 //   3. Sélection du créneau horaire sur le jour choisi
@@ -75,8 +113,8 @@ class _EcranReportSessionState extends State<EcranReportSession> {
       !_envoi;
 
   Color get _couleurDette {
-    if (_dettePourcentage == null) return CouleurApp.texteGris;
-    if (_dettePourcentage! < 10)   return CouleurApp.succesVert;
+    if (_dettePourcentage == null) return _T.lightText;
+    if (_dettePourcentage! < 10)   return _T.green;
     if (_dettePourcentage! < 25)   return const Color(0xFFF59E0B);
     return const Color(0xFFDC2626);
   }
@@ -96,7 +134,7 @@ class _EcranReportSessionState extends State<EcranReportSession> {
     _chargerSuggestion();
   }
 
-  // ── Appels réseau ────────────────────────────────────────────────────────────
+  // ── Appels réseau (INCHANGÉS) ──────────────────────────────────────────────────
 
   Future<void> _chargerSuggestion() async {
     setState(() => _chargeSuggestion = true);
@@ -217,7 +255,7 @@ class _EcranReportSessionState extends State<EcranReportSession> {
     }
   }
 
-  // ── Actions utilisateur ───────────────────────────────────────────────────────
+  // ── Actions utilisateur (INCHANGÉES) ───────────────────────────────────────────
 
   void _accepterSuggestion() {
     if (_suggestion == null) return;
@@ -268,7 +306,7 @@ class _EcranReportSessionState extends State<EcranReportSession> {
       locale: const Locale('fr'),
       builder: (ctx, child) => Theme(
         data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.light(primary: CouleurApp.bleuPrincipal),
+          colorScheme: const ColorScheme.light(primary: _T.nearlyDarkBlue),
         ),
         child: child!,
       ),
@@ -283,139 +321,185 @@ class _EcranReportSessionState extends State<EcranReportSession> {
   String _isoDate(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  // ── Construction de l'UI ──────────────────────────────────────────────────────
+  // ── Construction de l'UI (REFONTE TEMPLATE) ────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final nomMatiere = (widget.session['chapitre']?['matiere_nom'] as String?) ?? '';
     final nomChap    = (widget.session['chapitre']?['titre'] as String?) ?? '';
 
-    return Scaffold(
-      backgroundColor: CouleurApp.fondClair,
-      appBar: AppBar(
-        backgroundColor: CouleurApp.bleuPrincipal,
-        foregroundColor: Colors.white,
-        title: const Text('Reporter la séance'),
-        centerTitle: true,
-      ),
-      body: _chargeSuggestion
-          ? const Center(child: CircularProgressIndicator(color: CouleurApp.bleuPrincipal))
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
-              children: [
+    return Container(
+      color: _T.background,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Column(
+          children: [
+            _EnTeteEcran(titre: 'Reporter la séance'),
+            Expanded(
+              child: _chargeSuggestion
+                  ? const Center(
+                      child: CircularProgressIndicator(color: _T.nearlyDarkBlue))
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+                      children: [
 
-                // ── Info sur la session ──────────────────────────────────────
-                _CarteInfo(
-                  nomMatiere:  nomMatiere,
-                  nomChapitre: nomChap,
-                  datePrevue:  _datePrevueSession,
-                ),
-                const SizedBox(height: 24),
-
-                // ── Section A : suggestion intelligente ──────────────────────
-                if (_suggestion != null) ...[
-                  _CarteJourSuggere(
-                    suggestion: _suggestion!,
-                    acceptee:   _suggestionAcceptee,
-                    onAccepter: _envoi ? () {} : _accepterSuggestion,
-                    onRefuser:  _envoi ? () {} : _refuserSuggestion,
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // ── Section B : date picker (si refus ou pas de suggestion) ──
-                if (_suggestion == null || _suggestionAcceptee == false) ...[
-                  const _SectionTitre(titre: 'Choisir votre propre date'),
-                  const SizedBox(height: 10),
-                  _BoutonDate(
-                    label:      _nouvelleDateChoisie != null && _suggestionAcceptee == false
-                        ? _formatDate(_nouvelleDateChoisie!)
-                        : 'Choisir une date →',
-                    selectionne: _nouvelleDateChoisie != null && _suggestionAcceptee == false,
-                    onTap:      _envoi ? null : _choisirDate,
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // ── Section C : sélection de la tranche horaire ──────────────
-                if (_nouvelleDateChoisie != null) ...[
-                  if (_chargeTranches)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 20),
-                        child: CircularProgressIndicator(
-                          color: CouleurApp.bleuPrincipal, strokeWidth: 2,
+                        // ── Info sur la session (carte hero dégradée) ───────────
+                        _CarteInfo(
+                          nomMatiere:  nomMatiere,
+                          nomChapitre: nomChap,
+                          datePrevue:  _datePrevueSession,
                         ),
-                      ),
-                    )
-                  else if (_tranches.isNotEmpty) ...[
-                    const _SectionTitre(titre: 'Choisir le créneau horaire'),
-                    const SizedBox(height: 10),
-                    ..._tranches.map((t) => _TuileTrancheHoraire(
-                      tranche:    t,
-                      selectionne: _trancheChoisieId == (t['id'] as int?),
-                      onTap: _envoi
-                          ? null
-                          : () => setState(() => _trancheChoisieId = t['id'] as int?),
-                    )),
-                    const SizedBox(height: 16),
-                  ] else ...[
-                    _BanniereAvertissement(
-                      message: 'Aucun créneau disponible ce jour-là. Choisissez un autre jour.',
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+                        const SizedBox(height: 22),
 
-                  // ── Impact mémoire ────────────────────────────────────────
-                  if (_dettePourcentage != null && !_chargeTranches) ...[
-                    _CarteImpactMemoire(
-                      dettePourcentage: _dettePourcentage!,
-                      messageImpact:    _messageImpact,
-                      couleurDette:     _couleurDette,
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-                ],
+                        // ── Section A : suggestion intelligente ─────────────────
+                        if (_suggestion != null) ...[
+                          _CarteJourSuggere(
+                            suggestion: _suggestion!,
+                            acceptee:   _suggestionAcceptee,
+                            onAccepter: _envoi ? () {} : _accepterSuggestion,
+                            onRefuser:  _envoi ? () {} : _refuserSuggestion,
+                          ),
+                          const SizedBox(height: 18),
+                        ],
 
-                // ── Section D : motif + confirmation ─────────────────────────
-                if (_nouvelleDateChoisie != null && _trancheChoisieId != null) ...[
-                  const _SectionTitre(titre: 'Motif du report'),
-                  const SizedBox(height: 10),
-                  ..._motifs.map((m) => _TuileMotif(
-                    valeur:      m.$1,
-                    label:       m.$2,
-                    icone:       m.$3,
-                    selectionne: _motifChoisi == m.$1,
-                    onTap: _envoi
-                        ? null
-                        : () => setState(() => _motifChoisi = m.$1),
-                  )),
-                  const SizedBox(height: 32),
+                        // ── Section B : date picker (si refus ou pas de suggestion)
+                        if (_suggestion == null || _suggestionAcceptee == false) ...[
+                          const _SectionTitre(titre: 'Choisir ta propre date'),
+                          const SizedBox(height: 10),
+                          _BoutonDate(
+                            label: _nouvelleDateChoisie != null && _suggestionAcceptee == false
+                                ? _formatDate(_nouvelleDateChoisie!)
+                                : 'Choisir une date',
+                            selectionne: _nouvelleDateChoisie != null && _suggestionAcceptee == false,
+                            onTap: _envoi ? null : _choisirDate,
+                          ),
+                          const SizedBox(height: 18),
+                        ],
 
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: _peutConfirmer ? _confirmer : null,
-                      icon: _envoi
-                          ? const SizedBox(
-                              width: 18, height: 18,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 2.5))
-                          : const Icon(Icons.check_rounded),
-                      label: Text(_envoi ? 'Report en cours…' : 'Confirmer le report'),
+                        // ── Section C : sélection de la tranche horaire ─────────
+                        if (_nouvelleDateChoisie != null) ...[
+                          if (_chargeTranches)
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 20),
+                                child: CircularProgressIndicator(
+                                  color: _T.nearlyDarkBlue, strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          else if (_tranches.isNotEmpty) ...[
+                            const _SectionTitre(titre: 'Choisir le créneau horaire'),
+                            const SizedBox(height: 10),
+                            ..._tranches.map((t) => _TuileTrancheHoraire(
+                              tranche:    t,
+                              selectionne: _trancheChoisieId == (t['id'] as int?),
+                              onTap: _envoi
+                                  ? null
+                                  : () => setState(() => _trancheChoisieId = t['id'] as int?),
+                            )),
+                            const SizedBox(height: 18),
+                          ] else ...[
+                            _BanniereAvertissement(
+                              message: 'Aucun créneau disponible ce jour-là. Choisis un autre jour.',
+                            ),
+                            const SizedBox(height: 18),
+                          ],
+
+                          // ── Impact mémoire ────────────────────────────────────
+                          if (_dettePourcentage != null && !_chargeTranches) ...[
+                            _CarteImpactMemoire(
+                              dettePourcentage: _dettePourcentage!,
+                              messageImpact:    _messageImpact,
+                              couleurDette:     _couleurDette,
+                            ),
+                            const SizedBox(height: 22),
+                          ],
+                        ],
+
+                        // ── Section D : motif + confirmation ────────────────────
+                        if (_nouvelleDateChoisie != null && _trancheChoisieId != null) ...[
+                          const _SectionTitre(titre: 'Motif du report'),
+                          const SizedBox(height: 10),
+                          ..._motifs.map((m) => _TuileMotif(
+                            valeur:      m.$1,
+                            label:       m.$2,
+                            icone:       m.$3,
+                            selectionne: _motifChoisi == m.$1,
+                            onTap: _envoi
+                                ? null
+                                : () => setState(() => _motifChoisi = m.$1),
+                          )),
+                          const SizedBox(height: 28),
+
+                          _BoutonPrincipal(
+                            label:  _envoi ? 'Report en cours…' : 'Confirmer le report',
+                            enCours: _envoi,
+                            onTap:  _peutConfirmer ? _confirmer : null,
+                          ),
+                        ],
+                      ],
                     ),
-                  ),
-                ],
-              ],
             ),
+          ],
+        ),
+      ),
     );
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// En-tête d'écran — style template (barre blanche, coin bottomLeft arrondi)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _EnTeteEcran extends StatelessWidget {
+  final String titre;
+  const _EnTeteEcran({required this.titre});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _T.white,
+        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(32)),
+        boxShadow: [BoxShadow(
+          color:      _T.grey.withValues(alpha: 0.20),
+          offset:     const Offset(1.1, 1.1),
+          blurRadius: 10,
+        )],
+      ),
+      child: Column(
+        children: [
+          SizedBox(height: MediaQuery.of(context).padding.top),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 16, 12),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 44, height: 44,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(32),
+                    highlightColor: Colors.transparent,
+                    onTap: () => Navigator.pop(context),
+                    child: const Center(
+                      child: Icon(Icons.arrow_back_rounded, color: _T.grey)),
+                  ),
+                ),
+                Expanded(
+                  child: Text(titre,
+                    style: _T.ts(size: 22, weight: FontWeight.w700,
+                        spacing: 0.6, color: _T.darkerText)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sous-widgets
+// _SectionTitre — titre de section (style TitleView du template)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _SectionTitre extends StatelessWidget {
@@ -425,15 +509,13 @@ class _SectionTitre extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     titre,
-    style: const TextStyle(
-      color: CouleurApp.bleuSombre,
-      fontWeight: FontWeight.w700,
-      fontSize: 14,
-    ),
+    style: _T.ts(size: 18, weight: FontWeight.w500, spacing: 0.5, color: _T.lightText),
   );
 }
 
-// ── Info session ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _CarteInfo — carte hero de la session (dégradé, comme _CarteProchaineSeance)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CarteInfo extends StatelessWidget {
   final String   nomMatiere;
@@ -453,42 +535,55 @@ class _CarteInfo extends StatelessWidget {
     final dateStr = '${datePrevue.day} ${mois[datePrevue.month - 1]} ${datePrevue.year}';
 
     return Container(
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: CouleurApp.bleuClair,
-        borderRadius: BorderRadius.circular(14),
+        gradient: const LinearGradient(
+          colors: [_T.nearlyDarkBlue, _T.purple],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+        ),
+        borderRadius: const BorderRadius.only(
+          topLeft:     Radius.circular(8),
+          bottomLeft:  Radius.circular(8),
+          bottomRight: Radius.circular(8),
+          topRight:    Radius.circular(68),
+        ),
+        boxShadow: [BoxShadow(
+          color:      _T.nearlyDarkBlue.withValues(alpha: 0.4),
+          offset:     const Offset(1.1, 1.1),
+          blurRadius: 10,
+        )],
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.info_outline_rounded,
-              color: CouleurApp.bleuPrincipal, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(nomMatiere.toUpperCase(),
+              style: _T.ts(size: 12, weight: FontWeight.w700,
+                  spacing: 0.6, color: Colors.white70)),
+            const SizedBox(height: 4),
+            Text(nomChapitre,
+              maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: _T.ts(size: 18, weight: FontWeight.w600,
+                  color: Colors.white, height: 1.2)),
+            const SizedBox(height: 14),
+            Row(
               children: [
-                Text(nomMatiere,
-                    style: const TextStyle(
-                        color: CouleurApp.bleuPrincipal,
-                        fontWeight: FontWeight.w700, fontSize: 13)),
-                const SizedBox(height: 2),
-                Text(nomChapitre,
-                    style: const TextStyle(
-                        color: CouleurApp.bleuSombre, fontSize: 12)),
-                const SizedBox(height: 2),
+                const Icon(Icons.event_rounded, color: Colors.white, size: 16),
+                const SizedBox(width: 6),
                 Text('Prévue le $dateStr',
-                    style: const TextStyle(
-                        color: CouleurApp.texteGris, fontSize: 11)),
+                  style: _T.ts(size: 13, weight: FontWeight.w500, color: Colors.white)),
               ],
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-// ── Carte de suggestion intelligente ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _CarteJourSuggere — recommandation intelligente (carte template)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CarteJourSuggere extends StatelessWidget {
   final Map<String, dynamic> suggestion;
@@ -518,161 +613,142 @@ class _CarteJourSuggere extends StatelessWidget {
         ? '$jourSem ${dateObj.day} ${mois[dateObj.month - 1]}'
         : jourSem;
 
-    final couleurBg      = hasHcc ? Colors.white          : const Color(0xFFF0FDF4);
-    final couleurBordure = hasHcc ? CouleurApp.bordure    : const Color(0xFF86EFAC);
-    final couleurBadge   = hasHcc ? CouleurApp.bleuClair  : const Color(0xFFDCFCE7);
-    final couleurTexte   = hasHcc ? CouleurApp.bleuPrincipal : const Color(0xFF166534);
+    final accent       = hasHcc ? _T.nearlyDarkBlue : _T.green;
+    final couleurBadge = accent.withValues(alpha: 0.10);
 
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: couleurBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: couleurBordure, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 8, offset: const Offset(0, 2),
-          ),
-        ],
+        color:        _T.white,
+        borderRadius: const BorderRadius.only(
+          topLeft:     Radius.circular(8),
+          bottomLeft:  Radius.circular(8),
+          bottomRight: Radius.circular(8),
+          topRight:    Radius.circular(54),
+        ),
+        boxShadow: [_T.shadow],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-
-          // ── En-tête ────────────────────────────────────────────────────────
-          Row(
-            children: [
-              const Icon(Icons.auto_awesome_rounded,
-                  color: Color(0xFF8B5CF6), size: 16),
-              const SizedBox(width: 6),
-              const Text(
-                'Recommandation intelligente',
-                style: TextStyle(
-                  color: Color(0xFF8B5CF6),
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // ── Date + raison ──────────────────────────────────────────────────
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: couleurBadge,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  dateLabel,
-                  style: TextStyle(
-                    color: couleurTexte,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  raison,
-                  style: const TextStyle(
-                      color: CouleurApp.texteGris, fontSize: 12, height: 1.4),
-                ),
-              ),
-            ],
-          ),
-
-          // ── Perte mémoire estimée ──────────────────────────────────────────
-          if (dette > 0) ...[
-            const SizedBox(height: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // En-tête
             Row(
               children: [
-                const Icon(Icons.memory_rounded,
-                    size: 13, color: CouleurApp.texteGris),
-                const SizedBox(width: 4),
-                Text(
-                  'Perte mémoire estimée : ${dette.toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                      color: CouleurApp.texteGris, fontSize: 12),
-                ),
+                Icon(Icons.auto_awesome_rounded, color: accent, size: 16),
+                const SizedBox(width: 6),
+                Text('Recommandation intelligente',
+                  style: _T.ts(size: 12, weight: FontWeight.w700, color: accent)),
               ],
             ),
-          ],
-
-          // ── Boutons (si pas encore choisi) ────────────────────────────────
-          if (acceptee == null) ...[
             const SizedBox(height: 14),
+
+            // Date + raison
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 44,
-                    child: ElevatedButton(
-                      onPressed: onRefuser,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF3F4F6),
-                        foregroundColor: CouleurApp.texteGris,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: const Text(
-                        'Choisir moi-même',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                      ),
-                    ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color:        couleurBadge,
+                    borderRadius: BorderRadius.circular(10),
                   ),
+                  child: Text(dateLabel,
+                    style: _T.ts(size: 15, weight: FontWeight.w700, color: accent)),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: SizedBox(
-                    height: 44,
-                    child: ElevatedButton.icon(
-                      onPressed: onAccepter,
-                      icon: const Icon(Icons.check_rounded, size: 16),
-                      label: const Text('Accepter', style: TextStyle(fontSize: 12)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: CouleurApp.bleuPrincipal,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
+                  child: Text(raison,
+                    style: _T.ts(size: 12, color: _T.lightText, height: 1.4)),
                 ),
               ],
             ),
-          ] else if (acceptee == true) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(Icons.check_circle_rounded,
-                    color: CouleurApp.succesVert, size: 15),
-                const SizedBox(width: 5),
-                const Text(
-                  'Date acceptée',
-                  style: TextStyle(
-                      color: CouleurApp.succesVert,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12),
-                ),
-              ],
-            ),
+
+            // Perte mémoire estimée
+            if (dette > 0) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Icon(Icons.memory_rounded, size: 13, color: _T.lightText),
+                  const SizedBox(width: 5),
+                  Text('Perte mémoire estimée : ${dette.toStringAsFixed(0)}%',
+                    style: _T.ts(size: 12, color: _T.lightText)),
+                ],
+              ),
+            ],
+
+            // Boutons / état
+            if (acceptee == null) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 46,
+                      child: Material(
+                        color: _T.background,
+                        borderRadius: BorderRadius.circular(12),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: onRefuser,
+                          child: Center(
+                            child: Text('Choisir moi-même',
+                              style: _T.ts(size: 13, weight: FontWeight.w600,
+                                  color: _T.lightText)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SizedBox(
+                      height: 46,
+                      child: Material(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(12),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: onAccepter,
+                          child: Center(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.check_rounded, size: 16, color: Colors.white),
+                                const SizedBox(width: 6),
+                                Text('Accepter',
+                                  style: _T.ts(size: 13, weight: FontWeight.w700,
+                                      color: Colors.white)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ] else if (acceptee == true) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(Icons.check_circle_rounded, color: _T.green, size: 16),
+                  const SizedBox(width: 6),
+                  Text('Date acceptée',
+                    style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.green)),
+                ],
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
 }
 
-// ── Bouton de sélection de date ───────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _BoutonDate — sélecteur de date (carte template)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _BoutonDate extends StatelessWidget {
   final String   label;
@@ -687,45 +763,40 @@ class _BoutonDate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
+    return Material(
+      color: selectionne ? _T.nearlyDarkBlue.withValues(alpha: 0.08) : _T.white,
       borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selectionne ? CouleurApp.bleuPrincipal : CouleurApp.bordure,
-            width: selectionne ? 1.5 : 1,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: selectionne ? null : [_T.shadow],
           ),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.calendar_today_rounded,
-                color: selectionne
-                    ? CouleurApp.bleuPrincipal
-                    : CouleurApp.texteGris,
-                size: 20),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                color: selectionne
-                    ? CouleurApp.bleuSombre
-                    : CouleurApp.texteGris,
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-          ],
+          child: Row(
+            children: [
+              Icon(Icons.calendar_today_rounded,
+                  color: selectionne ? _T.nearlyDarkBlue : _T.lightText, size: 20),
+              const SizedBox(width: 12),
+              Text(label,
+                style: _T.ts(size: 14, weight: FontWeight.w600,
+                    color: selectionne ? _T.nearlyDarkBlue : _T.darkText)),
+              const Spacer(),
+              Icon(Icons.chevron_right_rounded,
+                  color: selectionne ? _T.nearlyDarkBlue : _T.lightText, size: 20),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// ── Tuile tranche horaire ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _TuileTrancheHoraire — créneau (carte template, sélection sans border-left)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _TuileTrancheHoraire extends StatelessWidget {
   final Map<String, dynamic> tranche;
@@ -745,85 +816,69 @@ class _TuileTrancheHoraire extends StatelessWidget {
     final duree      = tranche['duree_minutes']          as int?    ?? 0;
     final nbSessions = tranche['nb_sessions_existantes'] as int?    ?? 0;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: selectionne ? CouleurApp.bleuClair : Colors.white,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: selectionne ? _T.nearlyDarkBlue.withValues(alpha: 0.08) : _T.white,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selectionne ? CouleurApp.bleuPrincipal : CouleurApp.bordure,
-            width: selectionne ? 1.5 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.access_time_rounded,
-              color: selectionne ? CouleurApp.bleuPrincipal : CouleurApp.texteGris,
-              size: 20,
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: selectionne ? null : [_T.shadow],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$debut – $fin',
-                    style: TextStyle(
-                      color: selectionne
-                          ? CouleurApp.bleuPrincipal
-                          : CouleurApp.bleuSombre,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
+            child: Row(
+              children: [
+                Icon(Icons.access_time_rounded,
+                    color: selectionne ? _T.nearlyDarkBlue : _T.lightText, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '${(duree / 60).toStringAsFixed(1)} h disponibles',
-                        style: const TextStyle(
-                            color: CouleurApp.texteGris, fontSize: 11),
-                      ),
-                      if (nbSessions > 0) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEF3C7),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '$nbSessions séance(s) déjà prévue(s)',
-                            style: const TextStyle(
-                              color: Color(0xFF92400E),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
+                      Text('$debut – $fin',
+                        style: _T.ts(size: 14, weight: FontWeight.w700,
+                            color: selectionne ? _T.nearlyDarkBlue : _T.darkerText)),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text('${(duree / 60).toStringAsFixed(1)} h disponibles',
+                            style: _T.ts(size: 11, color: _T.lightText)),
+                          if (nbSessions > 0) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color:        const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text('$nbSessions séance(s) déjà prévue(s)',
+                                style: _T.ts(size: 10, weight: FontWeight.w600,
+                                    color: const Color(0xFF92400E))),
                             ),
-                          ),
-                        ),
-                      ],
+                          ],
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                if (selectionne)
+                  const Icon(Icons.check_circle_rounded, color: _T.nearlyDarkBlue, size: 20),
+              ],
             ),
-            if (selectionne)
-              const Icon(Icons.check_circle_rounded,
-                  color: CouleurApp.bleuPrincipal, size: 18),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-// ── Carte impact mémoire ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _CarteImpactMemoire — impact mémoire (carte template + barre de progression)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CarteImpactMemoire extends StatelessWidget {
   final double  dettePourcentage;
@@ -839,78 +894,67 @@ class _CarteImpactMemoire extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: CouleurApp.bordure),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        color:        _T.white,
+        borderRadius: const BorderRadius.only(
+          topLeft:     Radius.circular(8),
+          bottomLeft:  Radius.circular(8),
+          bottomRight: Radius.circular(8),
+          topRight:    Radius.circular(54),
+        ),
+        boxShadow: [_T.shadow],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.psychology_rounded,
-                  color: CouleurApp.bleuPrincipal, size: 18),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Impact mémoire (courbe d\'Ebbinghaus)',
-                  style: TextStyle(
-                      color: CouleurApp.bleuSombre,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.psychology_rounded, color: _T.nearlyDarkBlue, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text("Impact mémoire (courbe d'Ebbinghaus)",
+                    style: _T.ts(size: 13, weight: FontWeight.w700, color: _T.darkerText)),
                 ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: (dettePourcentage / 100).clamp(0.0, 1.0),
+                minHeight: 8,
+                backgroundColor: _T.background,
+                valueColor: AlwaysStoppedAnimation<Color>(couleurDette),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text('Perte de rétention estimée : ${dettePourcentage.toStringAsFixed(1)}%',
+              style: _T.ts(size: 13, weight: FontWeight.w700, color: couleurDette)),
+            if (messageImpact != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color:        _T.background,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(messageImpact!,
+                  style: _T.ts(size: 12, color: _T.lightText, height: 1.5)),
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: (dettePourcentage / 100).clamp(0.0, 1.0),
-              minHeight: 8,
-              backgroundColor: CouleurApp.fondClair,
-              valueColor: AlwaysStoppedAnimation<Color>(couleurDette),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Perte de rétention estimée : ${dettePourcentage.toStringAsFixed(1)}%',
-            style: TextStyle(
-                color: couleurDette,
-                fontWeight: FontWeight.w700,
-                fontSize: 13),
-          ),
-          if (messageImpact != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: CouleurApp.fondClair,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                messageImpact!,
-                style: const TextStyle(
-                    color: CouleurApp.texteGris, fontSize: 12, height: 1.5),
-              ),
-            ),
           ],
-        ],
+        ),
       ),
     );
   }
 }
 
-// ── Bannière d'avertissement ──────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _BanniereAvertissement
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _BanniereAvertissement extends StatelessWidget {
   final String message;
@@ -921,20 +965,21 @@ class _BanniereAvertissement extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEF3C7),
+        color:        const Color(0xFFFFF7ED),
         borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(
+          color:      const Color(0xFFD97706).withValues(alpha: 0.2),
+          offset:     const Offset(1.1, 1.1),
+          blurRadius: 10,
+        )],
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: Color(0xFFF59E0B), size: 18),
-          const SizedBox(width: 8),
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706), size: 18),
+          const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(
-                  color: Color(0xFF92400E), fontSize: 13),
-            ),
+            child: Text(message,
+              style: _T.ts(size: 13, color: const Color(0xFF92400E), height: 1.4)),
           ),
         ],
       ),
@@ -942,7 +987,9 @@ class _BanniereAvertissement extends StatelessWidget {
   }
 }
 
-// ── Tuile motif ───────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _TuileMotif — choix du motif (carte template, sélection sans border-left)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _TuileMotif extends StatelessWidget {
   final String     valeur;
@@ -961,44 +1008,95 @@ class _TuileMotif extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: selectionne ? CouleurApp.bleuClair : Colors.white,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selectionne ? _T.nearlyDarkBlue.withValues(alpha: 0.08) : _T.white,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selectionne ? CouleurApp.bleuPrincipal : CouleurApp.bordure,
-            width: selectionne ? 1.5 : 1,
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: selectionne ? null : [_T.shadow],
+            ),
+            child: Row(
+              children: [
+                Icon(icone,
+                    color: selectionne ? _T.nearlyDarkBlue : _T.lightText, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(label,
+                    style: _T.ts(size: 13,
+                        weight: selectionne ? FontWeight.w600 : FontWeight.normal,
+                        color: selectionne ? _T.nearlyDarkBlue : _T.darkText)),
+                ),
+                if (selectionne)
+                  const Icon(Icons.check_circle_rounded, color: _T.nearlyDarkBlue, size: 20),
+              ],
+            ),
           ),
         ),
-        child: Row(
-          children: [
-            Icon(icone,
-                color: selectionne
-                    ? CouleurApp.bleuPrincipal
-                    : CouleurApp.texteGris,
-                size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: selectionne
-                      ? CouleurApp.bleuPrincipal
-                      : CouleurApp.bleuSombre,
-                  fontWeight: selectionne ? FontWeight.w600 : FontWeight.normal,
-                  fontSize: 13,
-                ),
-              ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _BoutonPrincipal — CTA plein largeur (style template)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BoutonPrincipal extends StatelessWidget {
+  final String       label;
+  final bool         enCours;
+  final VoidCallback? onTap;
+
+  const _BoutonPrincipal({
+    required this.label,
+    required this.enCours,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final actif = onTap != null;
+    return SizedBox(
+      height: 52,
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: actif
+              ? const LinearGradient(
+                  colors: [_T.nearlyDarkBlue, _T.purple],
+                  begin: Alignment.topLeft, end: Alignment.bottomRight,
+                )
+              : null,
+          color: actif ? null : _T.grey.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: actif ? [BoxShadow(
+            color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
+            offset:     const Offset(0, 6),
+            blurRadius: 14,
+          )] : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Center(
+              child: enCours
+                  ? const SizedBox(
+                      width: 22, height: 22,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2.5))
+                  : Text(label,
+                      style: _T.ts(size: 15, weight: FontWeight.w700,
+                          color: actif ? Colors.white : _T.lightText)),
             ),
-            if (selectionne)
-              const Icon(Icons.check_circle_rounded,
-                  color: CouleurApp.bleuPrincipal, size: 18),
-          ],
+          ),
         ),
       ),
     );
