@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'ecrans/auth/ecran_connexion.dart';
 import 'ecrans/auth/ecran_inscription.dart';
+import 'ecrans/auth/ecran_intro_inscription.dart';
 import 'ecrans/auth/ecran_verification.dart';
 import 'ecrans/disponibilite/ecran_disponibilite.dart';
 import 'ecrans/planning/ecran_calibration_inscription.dart';
@@ -50,6 +51,7 @@ class NESJAcademyApp extends StatelessWidget {
 
           // ── Auth ────────────────────────────────────────────────────────
           Routes.connexion:           (_) => const EcranConnexion(),
+          Routes.introInscription:    (_) => const EcranIntroInscription(),
           Routes.inscription:         (_) => const EcranInscription(),
           Routes.verifierTelephone:   (_) => const EcranVerification(),
 

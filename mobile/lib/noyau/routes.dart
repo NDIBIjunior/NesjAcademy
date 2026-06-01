@@ -6,6 +6,7 @@ abstract class Routes {
 
   // Auth
   static const String connexion         = '/';
+  static const String introInscription  = '/intro-inscription';
   static const String inscription       = '/inscription';
   static const String verifierTelephone = '/verifier-telephone';
 

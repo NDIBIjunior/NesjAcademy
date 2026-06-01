@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
 
-import '../noyau/theme.dart';
-
 // ─────────────────────────────────────────────────────────────────────────────
-// ToastApp — notification flottante moderne (haut-droite)
+// ToastApp — notification flottante moderne (haut-droite), thème Fitness.
 //
-// Usage :
+// Usage (API inchangée) :
 //   ToastApp.afficher(context,
 //     message: 'Chapitre mis à jour.',
 //     type: ToastType.succes,
 //   );
 //
 // Trois variantes : succes · erreur · info
-// Animation : glisse depuis la droite + fondu à l'entrée,
-//             glisse vers la droite + fondu à la sortie.
+// Visuel : carte blanche, coin topRight arrondi (signature du template),
+//          pastille circulaire en dégradé avec icône blanche, ombre douce,
+//          barre de progression qui se vide pendant la durée d'affichage.
+// Animation : glisse depuis la droite + fondu + léger zoom (et inverse à la sortie).
 // Tap sur le toast = fermeture immédiate.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -45,19 +45,31 @@ class ToastApp {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Config visuelle par type
+// Palette locale — alignée sur le thème Fitness (_T) des écrans refondus
+// ─────────────────────────────────────────────────────────────────────────────
+
+abstract class _T {
+  static const Color white      = Color(0xFFFFFFFF);
+  static const Color grey       = Color(0xFF3A5160);
+  static const Color darkerText = Color(0xFF17262A);
+  static const Color message    = Color(0xFF4A6572);
+  static const String font      = 'WorkSans';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Config visuelle par type — un dégradé + une couleur d'accent + un titre
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ToastConfig {
   final IconData icone;
-  final Color    couleur;
-  final Color    fond;
+  final Color    debut;   // début du dégradé de la pastille
+  final Color    fin;     // fin du dégradé + couleur d'accent (titre, barre)
   final String   titre;
 
   const _ToastConfig({
     required this.icone,
-    required this.couleur,
-    required this.fond,
+    required this.debut,
+    required this.fin,
     required this.titre,
   });
 }
@@ -66,30 +78,30 @@ _ToastConfig _configPourType(ToastType type) {
   switch (type) {
     case ToastType.succes:
       return const _ToastConfig(
-        icone:   Icons.check_circle_rounded,
-        couleur: Color(0xFF059669),
-        fond:    Color(0xFFF0FDF4),
-        titre:   'Succès',
+        icone: Icons.check_circle_rounded,
+        debut: Color(0xFF34D399),
+        fin:   Color(0xFF059669),
+        titre: 'Succès',
       );
     case ToastType.erreur:
       return const _ToastConfig(
-        icone:   Icons.error_rounded,
-        couleur: Color(0xFFDC2626),
-        fond:    Color(0xFFFFF5F5),
-        titre:   'Erreur',
+        icone: Icons.error_rounded,
+        debut: Color(0xFFEF4444),
+        fin:   Color(0xFFB91C1C),
+        titre: 'Erreur',
       );
     case ToastType.info:
-      return _ToastConfig(
-        icone:   Icons.info_rounded,
-        couleur: CouleurApp.bleuPrincipal,
-        fond:    CouleurApp.bleuClair,
-        titre:   'Information',
+      return const _ToastConfig(
+        icone: Icons.info_rounded,
+        debut: Color(0xFF6A88E5),
+        fin:   Color(0xFF2633C5),
+        titre: 'Information',
       );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Widget overlay — gère son propre cycle d'animation
+// Widget overlay — gère son cycle d'animation (entrée/sortie) + le minuteur
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ToastOverlay extends StatefulWidget {
@@ -110,10 +122,17 @@ class _ToastOverlay extends StatefulWidget {
 }
 
 class _ToastOverlayState extends State<_ToastOverlay>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
+  // Contrôleur d'entrée/sortie (glisse + fondu + zoom)
   late final AnimationController _ctrl;
   late final Animation<double>   _glisse;
   late final Animation<double>   _opacite;
+  late final Animation<double>   _zoom;
+
+  // Minuteur : pilote la barre de progression (1.0 → 0.0) sur toute la durée
+  late final AnimationController _minuteur;
+
+  bool _ferme = false;
 
   @override
   void initState() {
@@ -121,7 +140,7 @@ class _ToastOverlayState extends State<_ToastOverlay>
 
     _ctrl = AnimationController(
       vsync:           this,
-      duration:        const Duration(milliseconds: 380),
+      duration:        const Duration(milliseconds: 420),
       reverseDuration: const Duration(milliseconds: 260),
     );
 
@@ -135,13 +154,24 @@ class _ToastOverlayState extends State<_ToastOverlay>
       curve:        Curves.easeOut,
       reverseCurve: Curves.easeIn,
     );
+    _zoom = Tween<double>(begin: 0.92, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack),
+    );
+
+    _minuteur = AnimationController(
+      vsync:    this,
+      duration: widget.duree,
+    );
 
     _ctrl.forward();
-    Future.delayed(widget.duree, _fermer);
+    // La barre démarre une fois le toast entré, puis déclenche la fermeture.
+    _minuteur.forward().whenComplete(_fermer);
   }
 
   Future<void> _fermer() async {
-    if (!mounted) return;
+    if (_ferme || !mounted) return;
+    _ferme = true;
+    _minuteur.stop();
     await _ctrl.reverse();
     widget.onDismiss();
   }
@@ -149,6 +179,7 @@ class _ToastOverlayState extends State<_ToastOverlay>
   @override
   void dispose() {
     _ctrl.dispose();
+    _minuteur.dispose();
     super.dispose();
   }
 
@@ -157,87 +188,144 @@ class _ToastOverlayState extends State<_ToastOverlay>
     final safeTop = MediaQuery.of(context).padding.top + 16;
     final cfg     = _configPourType(widget.type);
 
+    const rayon = BorderRadius.only(
+      topLeft:     Radius.circular(16),
+      bottomLeft:  Radius.circular(16),
+      bottomRight: Radius.circular(16),
+      topRight:    Radius.circular(30),
+    );
+
     return Positioned(
       top:   safeTop,
       right: 16,
       child: AnimatedBuilder(
         animation: _ctrl,
         builder: (_, child) => Transform.translate(
-          offset: Offset(110 * (1 - _glisse.value), 0),
-          child:  Opacity(opacity: _opacite.value, child: child),
+          offset: Offset(120 * (1 - _glisse.value), 0),
+          child: Opacity(
+            opacity: _opacite.value.clamp(0.0, 1.0),
+            child: Transform.scale(
+              scale:     _zoom.value,
+              alignment: Alignment.topRight,
+              child:     child,
+            ),
+          ),
         ),
         child: Material(
-          color:        Colors.transparent,
+          color: Colors.transparent,
           child: GestureDetector(
             onTap: _fermer,
             child: Container(
-              constraints: const BoxConstraints(
-                minWidth: 220,
-                maxWidth: 300,
-              ),
+              constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
               decoration: BoxDecoration(
-                color:        cfg.fond,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: cfg.couleur.withValues(alpha: 0.20),
-                ),
+                color:        _T.white,
+                borderRadius: rayon,
                 boxShadow: [
                   BoxShadow(
-                    color:      cfg.couleur.withValues(alpha: 0.12),
-                    blurRadius: 24,
-                    offset:     const Offset(0, 8),
+                    color:      _T.grey.withValues(alpha: 0.22),
+                    offset:     const Offset(1.1, 5.0),
+                    blurRadius: 16.0,
                   ),
                   BoxShadow(
-                    color:      Colors.black.withValues(alpha: 0.07),
-                    blurRadius: 8,
+                    color:      cfg.fin.withValues(alpha: 0.10),
                     offset:     const Offset(0, 2),
+                    blurRadius: 8.0,
                   ),
                 ],
               ),
-              child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                        child: Row(
-                          mainAxisSize:      MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Icône
-                            Padding(
-                              padding: const EdgeInsets.only(top: 1),
-                              child: Icon(cfg.icone,
-                                  color: cfg.couleur, size: 20),
+              // ClipRRect : confine la barre de progression aux coins arrondis.
+              child: ClipRRect(
+                borderRadius: rayon,
+                child: Stack(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 16, 14),
+                      child: Row(
+                        mainAxisSize:       MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Pastille dégradée avec icône blanche
+                          Container(
+                            width:  38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [cfg.debut, cfg.fin],
+                                begin:  Alignment.topLeft,
+                                end:    Alignment.bottomRight,
+                              ),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color:      cfg.fin.withValues(alpha: 0.35),
+                                  offset:     const Offset(0, 3),
+                                  blurRadius: 8,
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 10),
+                            child: Icon(cfg.icone, color: Colors.white, size: 21),
+                          ),
+                          const SizedBox(width: 12),
 
-                            // Titre + message
-                            Flexible(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize:       MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    cfg.titre,
-                                    style: TextStyle(
-                                      color:      cfg.couleur,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize:   13,
-                                    ),
+                          // Titre + message
+                          Flexible(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize:       MainAxisSize.min,
+                              children: [
+                                Text(
+                                  cfg.titre,
+                                  style: TextStyle(
+                                    fontFamily: _T.font,
+                                    color:      cfg.fin,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize:   14,
+                                    letterSpacing: 0.2,
                                   ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    widget.message,
-                                    style: const TextStyle(
-                                      color:    Color(0xFF374151),
-                                      fontSize: 12,
-                                      height:   1.45,
-                                    ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  widget.message,
+                                  style: const TextStyle(
+                                    fontFamily: _T.font,
+                                    color:      _T.message,
+                                    fontSize:   12.5,
+                                    height:     1.4,
+                                    fontWeight: FontWeight.w500,
                                   ),
-                                ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Barre de progression : se vide pendant la durée d'affichage
+                    Positioned(
+                      left: 0, right: 0, bottom: 0,
+                      child: AnimatedBuilder(
+                        animation: _minuteur,
+                        builder: (_, __) => Align(
+                          alignment: Alignment.centerLeft,
+                          child: FractionallySizedBox(
+                            widthFactor: (1.0 - _minuteur.value).clamp(0.0, 1.0),
+                            child: Container(
+                              height: 3,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [cfg.debut, cfg.fin],
+                                ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
