@@ -18,7 +18,6 @@ abstract class _T {
   static const Color darkerText     = Color(0xFF17262A);
   static const Color lightText      = Color(0xFF4A6572);
   static const Color green          = Color(0xFF10B981);
-  static const Color amber          = Color(0xFFD97706);
   static const Color purple         = Color(0xFF6F56E8);
   static const Color erreur         = Color(0xFFDC2626);
   static const String font          = 'WorkSans';
@@ -47,13 +46,28 @@ abstract class _T {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Statuts de couverture en classe (alignés sur le backend — fiables)
+// ─────────────────────────────────────────────────────────────────────────────
+
+abstract class _Statut {
+  static const String nonAborde = 'non_aborde';
+  static const String enCours   = 'en_cours';
+  static const String termine   = 'termine';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EcranPositionProgramme
-// L'élève indique sur quel chapitre son professeur en est pour chaque matière.
-// LOGIQUE 100 % INCHANGÉE — refonte visuelle uniquement.
+// L'élève déclare, chapitre par chapitre, où en est son professeur.
+// Stockage FIABLE : aucun statut n'est déduit de l'ordre des chapitres
+// (au Cameroun, un prof peut traiter le chapitre 4 avant le chapitre 3).
 // ─────────────────────────────────────────────────────────────────────────────
 
 class EcranPositionProgramme extends StatefulWidget {
-  const EcranPositionProgramme({super.key});
+  /// Si fourni, l'écran n'affiche QUE cette matière (action ciblée depuis le
+  /// planning). Sinon, toutes les matières sont éditables.
+  final int? matiereId;
+
+  const EcranPositionProgramme({super.key, this.matiereId});
 
   @override
   State<EcranPositionProgramme> createState() => _EcranPositionProgrammeState();
@@ -65,8 +79,8 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
   bool    _chargement = true;
   String? _erreur;
   List<Map<String, dynamic>> _matieres = [];
-  // Chapitre sélectionné par matière : {matiere_id: chapitre_id}
-  final Map<int, int?> _selection = {};
+  // Statut choisi par chapitre : {matiere_id: {chapitre_id: statut_classe}}
+  final Map<int, Map<int, String>> _statuts = {};
   bool _envoi = false;
 
   late final AnimationController _entreeCtrl;
@@ -84,7 +98,7 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
   @override
   void dispose() { _entreeCtrl.dispose(); super.dispose(); }
 
-  // ── Réseau (INCHANGÉ) ──────────────────────────────────────────────────────
+  // ── Réseau ───────────────────────────────────────────────────────────────
 
   Future<void> _charger() async {
     setState(() { _chargement = true; _erreur = null; });
@@ -92,17 +106,25 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
       final rep = await ClientApi.get(Constantes.urlPositionProgramme);
       if (rep.statusCode == 200) {
         final liste = jsonDecode(utf8.decode(rep.bodyBytes)) as List;
-        final matieres = liste
-            .cast<Map<String, dynamic>>()
-            .where((m) => m['besoin_mise_a_jour'] == true)
-            .toList();
+        var matieres = liste.cast<Map<String, dynamic>>();
 
-        // Pré-sélectionner le chapitre actuel de l'application
+        // Action ciblée : ne garder que la matière demandée, si précisée
+        if (widget.matiereId != null) {
+          matieres = matieres
+              .where((m) => m['matiere_id'] == widget.matiereId)
+              .toList();
+        }
+
+        // Pré-remplir le statut de chaque chapitre depuis la base
+        _statuts.clear();
         for (final m in matieres) {
-          final actuel = m['chapitre_actuel'] as Map<String, dynamic>?;
-          if (actuel != null) {
-            _selection[m['matiere_id'] as int] = actuel['id'] as int;
-          }
+          final mid = m['matiere_id'] as int;
+          final chapitres = (m['chapitres'] as List).cast<Map<String, dynamic>>();
+          _statuts[mid] = {
+            for (final c in chapitres)
+              c['id'] as int:
+                  (c['statut_classe'] as String?) ?? _Statut.nonAborde,
+          };
         }
 
         setState(() { _matieres = matieres; _chargement = false; });
@@ -118,42 +140,44 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
     }
   }
 
+  // Met à jour le statut d'un chapitre. « En cours » est exclusif par matière :
+  // si on déclare un nouveau chapitre en cours, l'ancien passe « terminé »
+  // (le prof a logiquement fini celui qu'il faisait avant de passer au suivant).
+  void _choisir(int matiereId, int chapitreId, String statut) {
+    setState(() {
+      final m = _statuts[matiereId]!;
+      if (statut == _Statut.enCours) {
+        m.forEach((cid, st) {
+          if (cid != chapitreId && st == _Statut.enCours) {
+            m[cid] = _Statut.termine;
+          }
+        });
+      }
+      m[chapitreId] = statut;
+    });
+  }
+
   Future<void> _sauvegarder() async {
-    // Vérifier que toutes les matières ont une sélection
-    final nonRemplis = _matieres.where((m) {
-      final mid = m['matiere_id'] as int;
-      return _selection[mid] == null;
-    }).toList();
-
-    if (nonRemplis.isNotEmpty) {
-      final noms = nonRemplis.map((m) => m['matiere_nom']).join(', ');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Sélectionne un chapitre pour : $noms',
-          style: _T.ts(color: Colors.white)),
-        backgroundColor:  _T.erreur,
-        behavior:         SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ));
-      return;
-    }
-
     setState(() => _envoi = true);
-
     try {
       for (final m in _matieres) {
         final mid = m['matiere_id'] as int;
-        final cid = _selection[mid]!;
+        final statutsMatiere = _statuts[mid] ?? {};
+        final payload = {
+          'matiere_id': mid,
+          'statuts': statutsMatiere.entries
+              .map((e) => {'chapitre_id': e.key, 'statut_classe': e.value})
+              .toList(),
+        };
         final rep = await ClientApi.post(
-          Constantes.urlPositionProgramme,
-          {'matiere_id': mid, 'chapitre_id': cid},
-          avecToken: true,
+          Constantes.urlPositionProgramme, payload, avecToken: true,
         );
         if (rep.statusCode >= 400) throw Exception();
       }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Position mise à jour — le planning va se régénérer.',
+        content: Text('Progression enregistrée — ton planning va s\'ajuster.',
           style: _T.ts(color: Colors.white)),
         backgroundColor: _T.green,
         behavior:        SnackBarBehavior.floating,
@@ -192,7 +216,7 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
                   : _erreur != null
                       ? _buildErreur()
                       : _matieres.isEmpty
-                          ? _buildToutAJour()
+                          ? _buildVide()
                           : _buildContenu(),
             ),
           ],
@@ -204,6 +228,15 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
   // ── En-tête dégradé ────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
+    // En mode ciblé, on titre directement avec le nom de la matière
+    final cible = widget.matiereId != null && _matieres.isNotEmpty;
+    final titre = cible
+        ? _matieres.first['matiere_nom'] as String
+        : 'Ma progression scolaire';
+    final sousTitre = cible
+        ? 'Où en est ton prof, chapitre par chapitre'
+        : 'Marque où en est ton prof, chapitre par chapitre';
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -235,11 +268,11 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Ma progression scolaire',
+                      Text(titre,
                         style: _T.ts(size: 20, weight: FontWeight.w800,
                             color: Colors.white)),
                       const SizedBox(height: 3),
-                      Text('Indique où en est chaque prof',
+                      Text(sousTitre,
                         style: _T.ts(size: 13,
                             color: Colors.white.withValues(alpha: 0.72))),
                     ],
@@ -279,9 +312,9 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Pour chaque matière, sélectionne le chapitre '
-                      'que ton professeur est en train de traiter en classe. '
-                      'Ton planning sera ajusté automatiquement.',
+                      'Pour chaque chapitre, indique s\'il est déjà terminé en '
+                      'classe, en cours, ou pas encore abordé. Peu importe '
+                      'l\'ordre : note exactement ce que ton prof a fait.',
                       style: _T.ts(size: 12, color: _T.darkText, height: 1.5)),
                   ),
                 ],
@@ -290,29 +323,11 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
           ),
         ),
 
-        // Légende des couleurs
-        FadeTransition(
-          opacity: _entreeAnim,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 20, 2),
-            child: Row(
-              children: [
-                _ItemLegende(couleur: _T.green, label: 'Déjà traité'),
-                const SizedBox(width: 16),
-                _ItemLegende(couleur: _T.nearlyDarkBlue, label: 'Position actuelle'),
-                const SizedBox(width: 16),
-                _ItemLegende(
-                  couleur: _T.grey.withValues(alpha: 0.35), label: 'À venir'),
-              ],
-            ),
-          ),
-        ),
-
         // Liste matières
         Expanded(
           child: ListView.builder(
             padding: EdgeInsets.fromLTRB(
-                20, 10, 20,
+                20, 14, 20,
                 MediaQuery.of(context).padding.bottom + 90),
             itemCount: _matieres.length,
             itemBuilder: (_, i) {
@@ -320,10 +335,11 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
                 CurvedAnimation(
                   parent: _entreeCtrl,
                   curve: Interval(
-                    0.1 + i * 0.15 > 0.9 ? 0.9 : 0.1 + i * 0.15,
+                    0.1 + i * 0.12 > 0.9 ? 0.9 : 0.1 + i * 0.12,
                     1.0, curve: Curves.fastOutSlowIn),
                 ),
               );
+              final mid = _matieres[i]['matiere_id'] as int;
               return AnimatedBuilder(
                 animation: _entreeCtrl,
                 builder: (_, child) => FadeTransition(
@@ -335,12 +351,9 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
                   ),
                 ),
                 child: _CarteMatierePosition(
-                  matiere: _matieres[i],
-                  chapitreSelectionneId:
-                      _selection[_matieres[i]['matiere_id'] as int],
-                  onSelectionner: (cid) => setState(
-                    () => _selection[_matieres[i]['matiere_id'] as int] = cid,
-                  ),
+                  matiere:    _matieres[i],
+                  statuts:    _statuts[mid] ?? {},
+                  onChoisir:  (cid, st) => _choisir(mid, cid, st),
                 ),
               );
             },
@@ -388,7 +401,7 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
                               const Icon(Icons.trending_up_rounded,
                                   color: Colors.white, size: 20),
                               const SizedBox(width: 8),
-                              Text('Valider ma progression scolaire',
+                              Text('Enregistrer ma progression',
                                 style: _T.ts(size: 15, weight: FontWeight.w700,
                                     color: Colors.white)),
                             ],
@@ -425,31 +438,19 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
     );
   }
 
-  Widget _buildToutAJour() {
+  Widget _buildVide() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 80, height: 80,
-              decoration: BoxDecoration(
-                color:  _T.green.withValues(alpha: 0.10),
-                shape:  BoxShape.circle,
-                border: Border.all(color: _T.green.withValues(alpha: 0.35), width: 2),
-              ),
-              child: const Icon(Icons.check_rounded, size: 40, color: _T.green),
-            ),
-            const SizedBox(height: 20),
-            Text('Tout est à jour !',
-              style: _T.ts(size: 20, weight: FontWeight.w800, color: _T.darkerText)),
-            const SizedBox(height: 10),
-            Text(
-              'Reviens la semaine prochaine pour mettre à jour ta progression.',
+            const Icon(Icons.menu_book_rounded, size: 52, color: _T.lightText),
+            const SizedBox(height: 14),
+            Text('Aucune matière à afficher pour le moment.',
               textAlign: TextAlign.center,
-              style: _T.ts(size: 14, color: _T.lightText, height: 1.55)),
-            const SizedBox(height: 28),
+              style: _T.ts(color: _T.lightText, height: 1.5)),
+            const SizedBox(height: 20),
             _BoutonSimple(label: 'Retour', onTap: () => Navigator.pop(context)),
           ],
         ),
@@ -459,38 +460,29 @@ class _EcranPositionProgrammeState extends State<EcranPositionProgramme>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _CarteMatierePosition — carte d'une matière avec sélecteur de chapitre
+// _CarteMatierePosition — une matière + ses chapitres, chacun avec un sélecteur
+// de statut à 3 états (pas abordé / en cours / terminé).
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _CarteMatierePosition extends StatelessWidget {
-  final Map<String, dynamic> matiere;
-  final int?                  chapitreSelectionneId;
-  final void Function(int)    onSelectionner;
+  final Map<String, dynamic>  matiere;
+  final Map<int, String>      statuts;
+  final void Function(int chapitreId, String statut) onChoisir;
 
   const _CarteMatierePosition({
     required this.matiere,
-    required this.chapitreSelectionneId,
-    required this.onSelectionner,
+    required this.statuts,
+    required this.onChoisir,
   });
 
   @override
   Widget build(BuildContext context) {
     final nom       = matiere['matiere_nom'] as String;
-    final chapitres = (matiere['chapitres'] as List)
-        .cast<Map<String, dynamic>>();
-    final actuel    = matiere['chapitre_actuel'] as Map<String, dynamic>?;
-    final actuelId  = actuel?['id'] as int?;
-    final aSelection = chapitreSelectionneId != null;
+    final chapitres = (matiere['chapitres'] as List).cast<Map<String, dynamic>>();
 
-    // Trouver l'ordre du chapitre actuel de l'application
-    // pour colorier les chapitres "déjà traités" en vert
-    int ordreActuel = 0;
-    if (actuelId != null) {
-      final chActuel = chapitres.where((c) => c['id'] == actuelId).toList();
-      if (chActuel.isNotEmpty) {
-        ordreActuel = chActuel.first['ordre'] as int? ?? 0;
-      }
-    }
+    final nbTotal   = chapitres.length;
+    final nbTermine = statuts.values.where((s) => s == _Statut.termine).length;
+    final progress  = nbTotal == 0 ? 0.0 : nbTermine / nbTotal;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -503,175 +495,69 @@ class _CarteMatierePosition extends StatelessWidget {
           topRight:    Radius.circular(54),
         ),
         boxShadow: [_T.shadow],
-        // Bordure d'accent quand la sélection est faite
-        border: aSelection
-            ? Border.all(
-                color: _T.nearlyDarkBlue.withValues(alpha: 0.3), width: 1.5)
-            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── En-tête matière ────────────────────────────────────────────
+          // ── En-tête matière + barre de progression ──────────────────────
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: aSelection
-                  ? _T.nearlyDarkBlue.withValues(alpha: 0.05)
-                  : _T.background,
-              borderRadius: const BorderRadius.only(
+            decoration: const BoxDecoration(
+              color: _T.background,
+              borderRadius: BorderRadius.only(
                 topLeft:  Radius.circular(8),
                 topRight: Radius.circular(54),
               ),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(nom,
-                    style: _T.ts(size: 15, weight: FontWeight.w700,
-                        color: aSelection ? _T.nearlyDarkBlue : _T.darkerText)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(nom,
+                        style: _T.ts(size: 15, weight: FontWeight.w700,
+                            color: _T.darkerText)),
+                    ),
+                    Text('$nbTermine/$nbTotal terminés',
+                      style: _T.ts(size: 11, weight: FontWeight.w600,
+                          color: _T.green)),
+                  ],
                 ),
-                if (!aSelection)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color:        _T.amber.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text('À sélectionner',
-                      style: _T.ts(size: 10, weight: FontWeight.w700,
-                          color: _T.amber)),
-                  )
-                else
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color:        _T.nearlyDarkBlue.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.check_rounded,
-                            size: 12, color: _T.nearlyDarkBlue),
-                        const SizedBox(width: 4),
-                        Text('Sélectionné',
-                          style: _T.ts(size: 10, weight: FontWeight.w700,
-                              color: _T.nearlyDarkBlue)),
-                      ],
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: progress),
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOutCubic,
+                    builder: (_, v, __) => LinearProgressIndicator(
+                      value: v,
+                      minHeight: 6,
+                      backgroundColor: _T.grey.withValues(alpha: 0.12),
+                      valueColor: const AlwaysStoppedAnimation(_T.green),
                     ),
                   ),
+                ),
               ],
             ),
           ),
 
+          // ── Liste des chapitres ──────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: Container(height: 1, color: _T.background),
-          ),
-
-          // ── Liste des chapitres ─────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             child: Column(
               children: chapitres.map((chap) {
-                final cid      = chap['id']    as int;
-                final titre    = chap['titre'] as String;
-                final ordre    = chap['ordre'] as int? ?? 0;
-                final estChosi = cid == chapitreSelectionneId;
+                final cid    = chap['id']    as int;
+                final titre  = chap['titre'] as String;
+                final ordre  = chap['ordre'] as int? ?? 0;
+                final statut = statuts[cid] ?? _Statut.nonAborde;
 
-                // Statut visuel du chapitre
-                // 1. Déjà traité par le prof (vert) : ordre < ordreActuel
-                // 2. Chapitre actuel de l'app (bleu) : cid == actuelId
-                // 3. À venir (gris) : ordre > ordreActuel
-
-                final estActuelApp = cid == actuelId;
-                final estDejaTr    = ordreActuel > 0 && ordre < ordreActuel;
-
-                final Color couleurCercle;
-                final Color couleurTexte;
-                final Widget? indicateur;
-
-                if (estChosi) {
-                  couleurCercle = _T.nearlyDarkBlue;
-                  couleurTexte  = _T.nearlyDarkBlue;
-                  indicateur    = const Icon(Icons.check_circle_rounded,
-                      color: _T.nearlyDarkBlue, size: 18);
-                } else if (estDejaTr) {
-                  couleurCercle = _T.green;
-                  couleurTexte  = _T.darkText;
-                  indicateur    = const Icon(Icons.check_rounded,
-                      color: _T.green, size: 16);
-                } else if (estActuelApp) {
-                  couleurCercle = _T.nearlyDarkBlue.withValues(alpha: 0.55);
-                  couleurTexte  = _T.nearlyDarkBlue;
-                  indicateur    = Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color:        _T.nearlyDarkBlue.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text('En cours',
-                      style: _T.ts(size: 9, weight: FontWeight.w700,
-                          color: _T.nearlyDarkBlue)),
-                  );
-                } else {
-                  couleurCercle = _T.grey.withValues(alpha: 0.2);
-                  couleurTexte  = _T.lightText;
-                  indicateur    = null;
-                }
-
-                return Material(
-                  color: estChosi
-                      ? _T.nearlyDarkBlue.withValues(alpha: 0.05)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => onSelectionner(cid),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          // Cercle numéro
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 180),
-                            width: 30, height: 30,
-                            decoration: BoxDecoration(
-                              color: couleurCercle, shape: BoxShape.circle),
-                            child: Center(
-                              child: Text('$ordre',
-                                style: _T.ts(
-                                  size: 12, weight: FontWeight.w800,
-                                  color: (estChosi || estDejaTr || estActuelApp)
-                                      ? Colors.white
-                                      : _T.lightText,
-                                )),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(titre,
-                              style: _T.ts(
-                                size: 13,
-                                weight: (estChosi || estActuelApp)
-                                    ? FontWeight.w600 : FontWeight.normal,
-                                color: couleurTexte,
-                              )),
-                          ),
-                          if (indicateur != null) ...[
-                            const SizedBox(width: 8),
-                            indicateur,
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
+                return _LigneChapitre(
+                  ordre:  ordre,
+                  titre:  titre,
+                  statut: statut,
+                  onChoisir: (st) => onChoisir(cid, st),
                 );
               }).toList(),
             ),
@@ -683,30 +569,139 @@ class _CarteMatierePosition extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Widgets utilitaires
+// _LigneChapitre — titre du chapitre + sélecteur de statut à 3 segments
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _ItemLegende extends StatelessWidget {
-  final Color  couleur;
-  final String label;
-  const _ItemLegende({required this.couleur, required this.label});
+class _LigneChapitre extends StatelessWidget {
+  final int    ordre;
+  final String titre;
+  final String statut;
+  final void Function(String statut) onChoisir;
+
+  const _LigneChapitre({
+    required this.ordre,
+    required this.titre,
+    required this.statut,
+    required this.onChoisir,
+  });
+
+  Color get _couleurPastille => switch (statut) {
+    _Statut.termine => _T.green,
+    _Statut.enCours => _T.nearlyDarkBlue,
+    _            => _T.grey.withValues(alpha: 0.25),
+  };
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 12, height: 12,
-          decoration: BoxDecoration(
-            color: couleur, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 5),
-        Text(label, style: _T.ts(size: 11, color: _T.lightText)),
-      ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              // Pastille de numéro qui prend la couleur du statut
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                width: 26, height: 26,
+                decoration: BoxDecoration(
+                  color: _couleurPastille, shape: BoxShape.circle),
+                child: Center(
+                  child: Text('$ordre',
+                    style: _T.ts(size: 11, weight: FontWeight.w800,
+                        color: Colors.white)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(titre,
+                  style: _T.ts(size: 13, weight: FontWeight.w600,
+                      color: _T.darkText, height: 1.3)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Sélecteur 3 segments
+          Row(
+            children: [
+              const SizedBox(width: 36),
+              _Segment(
+                label: 'Pas abordé', couleur: _T.grey,
+                actif: statut == _Statut.nonAborde,
+                onTap: () => onChoisir(_Statut.nonAborde),
+              ),
+              const SizedBox(width: 6),
+              _Segment(
+                label: 'En cours', couleur: _T.nearlyDarkBlue,
+                actif: statut == _Statut.enCours,
+                onTap: () => onChoisir(_Statut.enCours),
+              ),
+              const SizedBox(width: 6),
+              _Segment(
+                label: 'Terminé', couleur: _T.green,
+                actif: statut == _Statut.termine,
+                onTap: () => onChoisir(_Statut.termine),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
+
+class _Segment extends StatelessWidget {
+  final String      label;
+  final Color       couleur;
+  final bool        actif;
+  final VoidCallback onTap;
+
+  const _Segment({
+    required this.label, required this.couleur,
+    required this.actif, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: actif ? couleur.withValues(alpha: 0.12) : _T.background,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: actif
+                    ? couleur.withValues(alpha: 0.65)
+                    : _T.grey.withValues(alpha: 0.15),
+                width: actif ? 1.4 : 1.0,
+              ),
+            ),
+            child: Center(
+              child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _T.ts(
+                  size: 11,
+                  weight: actif ? FontWeight.w700 : FontWeight.w500,
+                  color: actif ? couleur : _T.lightText,
+                )),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Widgets utilitaires
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _BoutonSimple extends StatelessWidget {
   final String       label;

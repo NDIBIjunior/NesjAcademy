@@ -34,6 +34,7 @@ abstract class Constantes {
   static const String urlSessions          = '$_base/planning/sessions/';
   static const String urlSeancesRetard     = '$_base/planning/retard/';
   static const String urlPositionProgramme = '$_base/planning/position-programme/';
+  static const String urlSuiviChapitres     = '$_base/planning/suivi-chapitres/';
 
   // Toggle inclusion d'un objectif dans le planning (PATCH)
   // Usage : '${Constantes.urlTogglePlanning(id)}'

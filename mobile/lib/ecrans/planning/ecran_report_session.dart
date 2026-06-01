@@ -52,9 +52,11 @@ abstract class _T {
 //   1. Chargement : GET /sessions/{id}/reporter/ → suggestion du meilleur jour
 //   2. L'élève accepte la suggestion OU choisit sa propre date (J+1 à J+7)
 //   3. Sélection du créneau horaire sur le jour choisi
-//   4. Affichage de la dette mémorielle (courbe d'Ebbinghaus)
-//   5. Sélection du motif + confirmation
-//   6. POST /sessions/{id}/reporter/ → session déplacée, cascade informée
+//   4. Sélection du motif + confirmation
+//   5. POST /sessions/{id}/reporter/ → session déplacée, cascade informée
+//
+// NB : les détails de dette mémorielle (Ebbinghaus) ont été retirés de l'UI —
+//      inutiles à l'élève. Le backend continue de les calculer côté serveur.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class EcranReportSession extends StatefulWidget {
@@ -87,8 +89,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
   DateTime?                   _nouvelleDateChoisie;
   List<Map<String, dynamic>>  _tranches           = [];
   int?                        _trancheChoisieId;
-  double?                     _dettePourcentage;
-  String?                     _messageImpact;
   String                      _motifChoisi        = 'autre';
 
   static const _motifs = [
@@ -111,13 +111,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
       _trancheChoisieId != null &&
       !_jourSature &&
       !_envoi;
-
-  Color get _couleurDette {
-    if (_dettePourcentage == null) return _T.lightText;
-    if (_dettePourcentage! < 10)   return _T.green;
-    if (_dettePourcentage! < 25)   return const Color(0xFFF59E0B);
-    return const Color(0xFFDC2626);
-  }
 
   String _formatDate(DateTime d) {
     const jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
@@ -163,8 +156,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
       _chargeTranches     = true;
       _tranches           = [];
       _trancheChoisieId   = null;
-      _dettePourcentage   = null;
-      _messageImpact      = null;
       _jourSature         = false;
     });
     final id      = widget.session['id'] as int;
@@ -183,8 +174,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
         setState(() {
           _jourSature       = sature;
           _tranches         = tranches;
-          _dettePourcentage = (data['dette_pourcentage'] as num?)?.toDouble();
-          _messageImpact    = data['message_impact'] as String?;
           if (!sature && tranches.length == 1) {
             _trancheChoisieId = tranches[0]['id'] as int?;
           }
@@ -273,8 +262,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
       _nouvelleDateChoisie = date;
       _jourSature          = sature;
       _tranches            = tranches;
-      _dettePourcentage    = (_suggestion!['dette_pourcentage'] as num?)?.toDouble();
-      _messageImpact       = _suggestion!['message_impact'] as String?;
       if (!sature && tranches.length == 1) {
         _trancheChoisieId = tranches[0]['id'] as int?;
       }
@@ -287,8 +274,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
       _nouvelleDateChoisie = null;
       _tranches            = [];
       _trancheChoisieId    = null;
-      _dettePourcentage    = null;
-      _messageImpact       = null;
     });
   }
 
@@ -403,16 +388,6 @@ class _EcranReportSessionState extends State<EcranReportSession> {
                               message: 'Aucun créneau disponible ce jour-là. Choisis un autre jour.',
                             ),
                             const SizedBox(height: 18),
-                          ],
-
-                          // ── Impact mémoire ────────────────────────────────────
-                          if (_dettePourcentage != null && !_chargeTranches) ...[
-                            _CarteImpactMemoire(
-                              dettePourcentage: _dettePourcentage!,
-                              messageImpact:    _messageImpact,
-                              couleurDette:     _couleurDette,
-                            ),
-                            const SizedBox(height: 22),
                           ],
                         ],
 
@@ -600,11 +575,9 @@ class _CarteJourSuggere extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasHcc     = suggestion['has_hcc']       as bool?   ?? true;
-    final dateStr    = suggestion['date']           as String? ?? '';
-    final jourSem    = suggestion['jour_semaine']   as String? ?? '';
-    final raison     = suggestion['raison']         as String? ?? '';
-    final dette      = (suggestion['dette_pourcentage'] as num?)?.toDouble() ?? 0;
+    final dateStr    = suggestion['date']         as String? ?? '';
+    final jourSem    = suggestion['jour_semaine'] as String? ?? '';
+    final raison     = suggestion['raison']       as String? ?? '';
 
     final dateObj    = DateTime.tryParse(dateStr);
     const mois       = ['jan.', 'fév.', 'mars', 'avr.', 'mai', 'juin',
@@ -613,7 +586,8 @@ class _CarteJourSuggere extends StatelessWidget {
         ? '$jourSem ${dateObj.day} ${mois[dateObj.month - 1]}'
         : jourSem;
 
-    final accent       = hasHcc ? _T.nearlyDarkBlue : _T.green;
+    // Toujours la couleur principale de l'app pour la recommandation.
+    const accent       = _T.nearlyDarkBlue;
     final couleurBadge = accent.withValues(alpha: 0.10);
 
     return Container(
@@ -663,19 +637,6 @@ class _CarteJourSuggere extends StatelessWidget {
                 ),
               ],
             ),
-
-            // Perte mémoire estimée
-            if (dette > 0) ...[
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Icon(Icons.memory_rounded, size: 13, color: _T.lightText),
-                  const SizedBox(width: 5),
-                  Text('Perte mémoire estimée : ${dette.toStringAsFixed(0)}%',
-                    style: _T.ts(size: 12, color: _T.lightText)),
-                ],
-              ),
-            ],
 
             // Boutons / état
             if (acceptee == null) ...[
@@ -870,82 +831,6 @@ class _TuileTrancheHoraire extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _CarteImpactMemoire — impact mémoire (carte template + barre de progression)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _CarteImpactMemoire extends StatelessWidget {
-  final double  dettePourcentage;
-  final String? messageImpact;
-  final Color   couleurDette;
-
-  const _CarteImpactMemoire({
-    required this.dettePourcentage,
-    required this.messageImpact,
-    required this.couleurDette,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color:        _T.white,
-        borderRadius: const BorderRadius.only(
-          topLeft:     Radius.circular(8),
-          bottomLeft:  Radius.circular(8),
-          bottomRight: Radius.circular(8),
-          topRight:    Radius.circular(54),
-        ),
-        boxShadow: [_T.shadow],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.psychology_rounded, color: _T.nearlyDarkBlue, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text("Impact mémoire (courbe d'Ebbinghaus)",
-                    style: _T.ts(size: 13, weight: FontWeight.w700, color: _T.darkerText)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(
-                value: (dettePourcentage / 100).clamp(0.0, 1.0),
-                minHeight: 8,
-                backgroundColor: _T.background,
-                valueColor: AlwaysStoppedAnimation<Color>(couleurDette),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text('Perte de rétention estimée : ${dettePourcentage.toStringAsFixed(1)}%',
-              style: _T.ts(size: 13, weight: FontWeight.w700, color: couleurDette)),
-            if (messageImpact != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color:        _T.background,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(messageImpact!,
-                  style: _T.ts(size: 12, color: _T.lightText, height: 1.5)),
-              ),
-            ],
-          ],
         ),
       ),
     );

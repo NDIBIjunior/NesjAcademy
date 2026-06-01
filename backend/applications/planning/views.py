@@ -995,15 +995,25 @@ class VuePositionProgramme(APIView):
     """
     GET  /api/planning/position-programme/
         Retourne pour chaque matière : le chapitre actuel avec le prof,
-        la liste des chapitres disponibles, et si une mise à jour est nécessaire
-        (aucune mise à jour ou dernière mise à jour > 7 jours).
+        la liste des chapitres (avec leur statut_classe stocké), et si une
+        mise à jour est nécessaire (jamais renseignée ou > 7 jours).
 
     POST /api/planning/position-programme/
-        Corps : { "matiere_id": 1, "chapitre_id": 3 }
-        Met à jour la position et synchronise ProgressionChapitre :
-          - chapitres avant le chapitre actuel → EN_COURS
-          - chapitre actuel                   → EN_COURS
-          - chapitres après                   → PAS_VU (non vus encore)
+        Enregistre l'avancement EN CLASSE de façon FIABLE, chapitre par
+        chapitre, sans jamais le déduire de l'ordre (les profs camerounais
+        ne suivent pas toujours l'ordre officiel : ch.4 parfois avant ch.3).
+
+        Format complet (recommandé) :
+          { "matiere_id": 1,
+            "statuts": [ {"chapitre_id": 3, "statut_classe": "termine"},
+                         {"chapitre_id": 4, "statut_classe": "en_cours"} ] }
+
+        Format simple (compat) — marque un seul chapitre « en cours » :
+          { "matiere_id": 1, "chapitre_id": 3 }
+
+        Ne touche JAMAIS au statut de maîtrise (révision personnelle).
+        Le curseur chapitre_actuel (ancre de l'algorithme) est positionné sur
+        le chapitre « en cours », à défaut le « terminé » le plus avancé.
     """
 
     permission_classes = [IsAuthenticated]
@@ -1027,6 +1037,12 @@ class VuePositionProgramme(APIView):
             .select_related('chapitre_actuel')
         }
 
+        # statut_classe stocké par chapitre (pour préremplir l'écran de saisie)
+        statuts_classe = {
+            pc.chapitre_id: pc.statut_classe
+            for pc in ProgressionChapitre.objects.filter(eleve=eleve)
+        }
+
         donnees = []
         for mat in matieres:
             chapitres = list(mat.chapitres.order_by('ordre'))
@@ -1044,7 +1060,14 @@ class VuePositionProgramme(APIView):
                     "ordre": pos.chapitre_actuel.ordre,
                 } if pos and pos.chapitre_actuel else None,
                 "chapitres": [
-                    {"id": c.id, "titre": c.titre, "ordre": c.ordre}
+                    {
+                        "id":            c.id,
+                        "titre":         c.titre,
+                        "ordre":         c.ordre,
+                        "statut_classe": statuts_classe.get(
+                            c.id, ProgressionChapitre.CLASSE_NON_ABORDE
+                        ),
+                    }
                     for c in chapitres
                 ],
             })
@@ -1052,61 +1075,222 @@ class VuePositionProgramme(APIView):
         return Response(donnees)
 
     def post(self, request):
+        eleve       = request.user
         matiere_id  = request.data.get('matiere_id')
-        chapitre_id = request.data.get('chapitre_id')
+        statuts     = request.data.get('statuts')       # format complet
+        chapitre_id = request.data.get('chapitre_id')   # format simple (compat)
 
-        if not matiere_id or not chapitre_id:
+        if not matiere_id:
             return Response(
-                {"erreur": "Les champs matiere_id et chapitre_id sont obligatoires."},
+                {"erreur": "Le champ matiere_id est obligatoire."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        eleve = request.user
-
         try:
-            matiere  = Matiere.objects.get(id=matiere_id, niveau=eleve.niveau)
-            chapitre = Chapitre.objects.get(id=chapitre_id, matiere=matiere)
-        except (Matiere.DoesNotExist, Chapitre.DoesNotExist):
+            matiere = Matiere.objects.get(id=matiere_id, niveau=eleve.niveau)
+        except Matiere.DoesNotExist:
             return Response(
-                {"erreur": "Matière ou chapitre introuvable."},
+                {"erreur": "Matière introuvable."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Sauvegarder la position
-        PositionProgramme.objects.update_or_create(
-            eleve=eleve,
-            matiere=matiere,
-            defaults={'chapitre_actuel': chapitre},
-        )
+        # Chapitres de la matière, indexés par id (sert à valider les entrées)
+        chapitres_matiere = {c.id: c for c in Chapitre.objects.filter(matiere=matiere)}
+        statuts_valides   = {s[0] for s in ProgressionChapitre.STATUTS_CLASSE}
 
-        # Synchroniser ProgressionChapitre pour tous les chapitres de la matière
-        tous_chapitres = Chapitre.objects.filter(matiere=matiere)
-        for chap in tous_chapitres:
-            if chap.ordre <= chapitre.ordre:
-                # Vu avec le prof (en cours ou déjà vu)
-                statut_cible = ProgressionChapitre.EN_COURS
-            else:
-                # Pas encore vu avec le prof
-                statut_cible = ProgressionChapitre.PAS_VU
+        # ── Construire la liste (chapitre, statut_classe) à enregistrer ──────
+        a_enregistrer = []  # [(Chapitre, statut_classe)]
 
-            prog, cree = ProgressionChapitre.objects.get_or_create(
-                eleve=eleve,
-                chapitre=chap,
-                defaults={'statut': statut_cible},
+        if isinstance(statuts, list):
+            # Format complet : un statut explicite par chapitre déclaré
+            for item in statuts:
+                cid = item.get('chapitre_id')
+                sc  = item.get('statut_classe')
+                if cid not in chapitres_matiere:
+                    return Response(
+                        {"erreur": f"Chapitre {cid} introuvable pour cette matière."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if sc not in statuts_valides:
+                    return Response(
+                        {"erreur": f"statut_classe invalide : '{sc}'. "
+                                   f"Valeurs acceptées : {', '.join(sorted(statuts_valides))}."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                a_enregistrer.append((chapitres_matiere[cid], sc))
+        elif chapitre_id is not None:
+            # Format simple : le chapitre indiqué passe « en cours »
+            if chapitre_id not in chapitres_matiere:
+                return Response(
+                    {"erreur": "Chapitre introuvable pour cette matière."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            a_enregistrer.append(
+                (chapitres_matiere[chapitre_id], ProgressionChapitre.CLASSE_EN_COURS)
             )
-            if not cree and prog.statut != ProgressionChapitre.MAITRISE:
-                # Ne pas rétrograder un chapitre déjà maîtrisé
-                prog.statut = statut_cible
-                prog.save(update_fields=['statut'])
+        else:
+            return Response(
+                {"erreur": "Fournis soit 'statuts' (liste), soit 'chapitre_id'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Recalibrer les sessions futures de cette matière uniquement.
-        # Les créneaux, dates et autres matières restent intacts.
-        recalibrer_sessions_matiere(eleve, matiere, chapitre)
+        # ── Enregistrer statut_classe (SANS toucher au statut de maîtrise) ───
+        for chap, sc in a_enregistrer:
+            prog, cree = ProgressionChapitre.objects.get_or_create(
+                eleve=eleve, chapitre=chap,
+                defaults={'statut_classe': sc},
+            )
+            if not cree and prog.statut_classe != sc:
+                prog.statut_classe = sc
+                prog.save(update_fields=['statut_classe'])
+
+        # ── Curseur (ancre pour l'algorithme) ────────────────────────────────
+        # On l'ancre sur le chapitre « en cours » ; à défaut sur le « terminé »
+        # le plus avancé. Si rien de tel n'est déclaré, on ne le change pas.
+        en_cours = [c for c, sc in a_enregistrer
+                    if sc == ProgressionChapitre.CLASSE_EN_COURS]
+        ancre = en_cours[-1] if en_cours else None
+        if ancre is None:
+            termines = [c for c, sc in a_enregistrer
+                        if sc == ProgressionChapitre.CLASSE_TERMINE]
+            if termines:
+                ancre = max(termines, key=lambda c: c.ordre)
+
+        if ancre is not None:
+            PositionProgramme.objects.update_or_create(
+                eleve=eleve, matiere=matiere,
+                defaults={'chapitre_actuel': ancre},
+            )
+            # Recalibre les sessions futures de cette seule matière.
+            recalibrer_sessions_matiere(eleve, matiere, ancre)
 
         return Response(
-            {"message": f"Position mise à jour : {chapitre.titre}"},
+            {"message": "Progression scolaire enregistrée.",
+             "chapitres_mis_a_jour": len(a_enregistrer)},
             status=status.HTTP_200_OK,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue 8b : Suivi détaillé des chapitres (consultation lecture seule)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueSuiviChapitres(APIView):
+    """
+    GET /api/planning/suivi-chapitres/
+
+    Vue de CONSULTATION (lecture seule) de l'avancement de l'élève dans chaque
+    matière. Contrairement à VuePositionProgramme (qui ne renvoie que les
+    matières à mettre à jour pour la saisie), cette vue renvoie TOUTES les
+    matières avec, pour chaque chapitre, DEUX statuts distincts :
+
+      - statut_classe   : où en est le PROF (dérivé du curseur chapitre_actuel)
+            termine  → ordre < chapitre actuel   (déjà traité en classe)
+            en_cours → ordre == chapitre actuel  (en cours en classe)
+            a_venir  → ordre > chapitre actuel   (pas encore abordé)
+
+      - statut_maitrise : où en est l'ÉLÈVE dans SA révision personnelle,
+            lu depuis ProgressionChapitre (pas_vu / en_cours / maitrise).
+
+    Aucun champ n'est stocké pour statut_classe : il est calculé à la volée en
+    comparant l'ordre du chapitre au curseur. Le modèle reste donc intact.
+    """
+
+    permission_classes = [IsAuthenticated]
+    DELAI_SEMAINE = timedelta(days=7)
+
+    def _besoin_mise_a_jour(self, position):
+        """True si jamais renseigné ou si la dernière mise à jour date de ≥ 7 jours."""
+        if position is None:
+            return True
+        age = date.today() - position.date_mise_a_jour.date()
+        return age >= self.DELAI_SEMAINE
+
+    def get(self, request):
+        eleve = request.user
+
+        matieres = (
+            Matiere.objects
+            .filter(niveau=eleve.niveau, systeme=eleve.systeme_scolaire or 'FR')
+            .prefetch_related('chapitres')
+            .order_by('ordre_affichage')
+        )
+
+        # Curseur (chapitre actuel) par matière — 1 seule requête
+        positions = {
+            p.matiere_id: p
+            for p in PositionProgramme.objects.filter(eleve=eleve)
+            .select_related('chapitre_actuel')
+        }
+
+        # Progressions de l'élève (couverture classe + maîtrise) — 1 requête
+        progressions = {
+            pc.chapitre_id: pc
+            for pc in ProgressionChapitre.objects.filter(eleve=eleve)
+        }
+
+        donnees = []
+        for mat in matieres:
+            chapitres = list(mat.chapitres.order_by('ordre'))
+            if not chapitres:
+                continue
+
+            pos = positions.get(mat.id)
+
+            liste_chap   = []
+            nb_termines  = 0   # chapitres déclarés terminés en classe (fiable)
+            nb_en_cours  = 0   # chapitres en cours en classe
+            nb_maitrises = 0   # chapitres maîtrisés par l'élève (révision personnelle)
+
+            for c in chapitres:
+                pc = progressions.get(c.id)
+
+                # ── Statut classe : LU depuis la base (jamais déduit de l'ordre) ──
+                statut_classe = (
+                    pc.statut_classe if pc
+                    else ProgressionChapitre.CLASSE_NON_ABORDE
+                )
+                if statut_classe == ProgressionChapitre.CLASSE_TERMINE:
+                    nb_termines += 1
+                elif statut_classe == ProgressionChapitre.CLASSE_EN_COURS:
+                    nb_en_cours += 1
+
+                # ── Statut maîtrise (révision personnelle) ────────────────────
+                statut_maitrise = pc.statut if pc else ProgressionChapitre.PAS_VU
+                if statut_maitrise == ProgressionChapitre.MAITRISE:
+                    nb_maitrises += 1
+
+                liste_chap.append({
+                    'id':              c.id,
+                    'titre':           c.titre,
+                    'ordre':           c.ordre,
+                    'statut_classe':   statut_classe,
+                    'statut_maitrise': statut_maitrise,
+                })
+
+            donnees.append({
+                'matiere_id':         mat.id,
+                'matiere_nom':        mat.nom,
+                'coefficient':        float(mat.coefficient_minesec),
+                'besoin_mise_a_jour': self._besoin_mise_a_jour(pos),
+                'date_mise_a_jour':   (
+                    pos.date_mise_a_jour.date().isoformat() if pos else None
+                ),
+                'chapitre_actuel': {
+                    'id':    pos.chapitre_actuel.id,
+                    'titre': pos.chapitre_actuel.titre,
+                    'ordre': pos.chapitre_actuel.ordre,
+                } if pos and pos.chapitre_actuel else None,
+                'compteurs': {
+                    'nb_total':     len(chapitres),
+                    'nb_termines':  nb_termines,
+                    'nb_en_cours':  nb_en_cours,
+                    'nb_maitrises': nb_maitrises,
+                },
+                'chapitres': liste_chap,
+            })
+
+        return Response(donnees)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

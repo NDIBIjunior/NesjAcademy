@@ -9,6 +9,7 @@ import '../../donnees/api/client_api.dart';
 import '../../donnees/local/stockage_local.dart';
 import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
+import '../../noyau/etat_seance.dart';
 import '../../noyau/observateur_route.dart';
 import '../planning/ecran_decaler_session.dart';
 import '../planning/ecran_report_session.dart';
@@ -248,22 +249,46 @@ class _EcranAccueilState extends State<EcranAccueil>
             parent: animationController!,
             curve: const Interval(0, 0.5, curve: Curves.fastOutSlowIn))),
         animationController: animationController!,
-        onTap: () => Navigator.push(context, MaterialPageRoute(
-          builder: (_) => EcranSeancesRetard(onMisAJour: _rafraichir),
+        onTap: () => Navigator.push(context, PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 380),
+          pageBuilder: (_, __, ___) => EcranSeancesRetard(onMisAJour: _rafraichir),
+          transitionsBuilder: (_, anim, __, child) {
+            final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+            return FadeTransition(
+              opacity: curved,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.06), end: Offset.zero,
+                ).animate(curved),
+                child: child,
+              ),
+            );
+          },
         )),
       ));
     }
   }
 
-  // Prochaine séance à faire : 1re séance non complétée d'aujourd'hui,
-  // sinon la 1re séance à venir dans la semaine (jours suivants).
+  // Prochaine séance À FAIRE, déterminée par l'HEURE actuelle :
+  //   • on ignore les séances complétées, optionnelles ET déjà manquées
+  //     (heure de fin passée) → une séance dont l'heure est dépassée bascule
+  //     automatiquement en « manquée » et n'est plus proposée ;
+  //   • on renvoie la 1re séance encore à faire (en cours, bientôt, à venir),
+  //     d'abord aujourd'hui, puis dans les jours suivants.
+  // Ex. : séance prévue à 18h, l'élève ouvre l'app à 20h → la séance de 18h est
+  //       manquée, la « prochaine » devient celle de 20h.
   Map<String, dynamic>? _prochaineSeance() {
     final d = _donnees;
     if (d == null) return null;
 
-    // Aujourd'hui d'abord
-    for (final s in d.sessions) {
-      if (s['completee'] != true && s['est_optionnelle'] != true) return s;
+    bool candidate(Map<String, dynamic> s) =>
+        s['est_optionnelle'] != true && estAFaire(s);
+
+    // Aujourd'hui d'abord, dans l'ordre chronologique
+    final aujourd = [...d.sessions]
+      ..sort((a, b) => _heureTri(a).compareTo(_heureTri(b)));
+    for (final s in aujourd) {
+      if (candidate(s)) return s;
     }
 
     // Sinon, parcourir la semaine à partir d'aujourd'hui
@@ -276,7 +301,7 @@ class _EcranAccueilState extends State<EcranAccueil>
       final liste = [...d.sessionsSemaine[cle]!]
         ..sort((a, b) => _heureTri(a).compareTo(_heureTri(b)));
       for (final s in liste) {
-        if (s['completee'] != true && s['est_optionnelle'] != true) return s;
+        if (candidate(s)) return s;
       }
     }
     return null;
@@ -1292,10 +1317,11 @@ class _CarteSeance extends StatelessWidget {
     final type       = session['type_session'] as String;
     final duree      = session['duree_minutes'] as int;
     final completee  = session['completee']    as bool? ?? false;
+    final manquee    = !completee && estManquee(session);
     final lettre     = lettreType(type);
     final couleurs   = _couleurs[type] ?? ('#738AE6', '#5C5EDD');
-    final startColor = HexColor(couleurs.$1);
-    final endColor   = HexColor(couleurs.$2);
+    final startColor = manquee ? const Color(0xFFEF4444) : HexColor(couleurs.$1);
+    final endColor   = manquee ? const Color(0xFFB91C1C) : HexColor(couleurs.$2);
 
     // Créneau horaire : heure de la session, sinon heure de la tranche
     final heureDebut = session['heure_debut_session'] as String?;
@@ -1391,6 +1417,19 @@ class _CarteSeance extends StatelessWidget {
                                     )),
                                 ],
                               )
+                            else if (manquee)
+                              Row(
+                                children: [
+                                  const Icon(Icons.error_rounded,
+                                      color: Colors.white, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text('Manquée',
+                                    style: TextStyle(
+                                      fontFamily: _T.font, fontWeight: FontWeight.w700,
+                                      fontSize: 13, color: _T.white,
+                                    )),
+                                ],
+                              )
                             else ...[
                               // Créneau horaire
                               if (creneau != null)
@@ -1473,6 +1512,29 @@ String _heureTri(Map<String, dynamic> s) =>
     ((s['tranche'] as Map<String, dynamic>?)?['heure_debut'] as String?) ??
     '99:99';
 
+// Libellé + couleur + icône pour l'état temporel d'une séance (badge accueil).
+({String label, Color couleur, IconData icone}) _infoEtat(
+    EtatSeance etat, String? heureDebut) {
+  switch (etat) {
+    case EtatSeance.enCours:
+      return (label: 'Maintenant', couleur: const Color(0xFF34D399),
+              icone: Icons.play_circle_fill_rounded);
+    case EtatSeance.bientot:
+      return (label: 'Bientôt', couleur: const Color(0xFFFBBF24),
+              icone: Icons.notifications_active_rounded);
+    case EtatSeance.aVenir:
+      final h = heureDebut != null ? _hhmm(heureDebut) : null;
+      return (label: h != null ? 'À $h' : 'À venir', couleur: Colors.white,
+              icone: Icons.schedule_rounded);
+    case EtatSeance.manquee:
+      return (label: 'Manquée', couleur: const Color(0xFFFCA5A5),
+              icone: Icons.error_rounded);
+    case EtatSeance.faite:
+      return (label: 'Faite', couleur: const Color(0xFF34D399),
+              icone: Icons.check_circle_rounded);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // _CarteProchaineSeance — carte hero (déplacée depuis le Planning).
 // C'est le premier élément que voit l'élève : mise en avant + clic → options.
@@ -1511,6 +1573,8 @@ class _CarteProchaineSeance extends StatelessWidget {
     final heureDebut = session['heure_debut_session'] as String?;
     final heureFin   = session['heure_fin_session']   as String?;
     final libelle    = _libellesType[type] ?? type;
+    final infoEtat   = _infoEtat(etatSeance(session), heureDebut
+        ?? (tranche?['heure_debut'] as String?));
 
     final h = duree ~/ 60; final m = duree % 60;
     final labelDuree = h > 0
@@ -1561,9 +1625,32 @@ class _CarteProchaineSeance extends StatelessWidget {
                         children: [
                           const Icon(Icons.bolt_rounded, color: Colors.white70, size: 16),
                           const SizedBox(width: 4),
-                          Text('Prochaine séance · $libelle',
-                            style: TextStyle(fontFamily: _T.font, fontSize: 13,
-                                color: Colors.white70)),
+                          Expanded(
+                            child: Text('Prochaine séance · $libelle',
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontFamily: _T.font, fontSize: 13,
+                                  color: Colors.white70)),
+                          ),
+                          const SizedBox(width: 8),
+                          // Badge d'état temporel : Maintenant / Bientôt / À HH:MM
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(infoEtat.icone, size: 13, color: infoEtat.couleur),
+                                const SizedBox(width: 4),
+                                Text(infoEtat.label,
+                                  style: TextStyle(fontFamily: _T.font, fontSize: 11,
+                                      fontWeight: FontWeight.w700, color: infoEtat.couleur)),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -1989,7 +2076,7 @@ class _CarteAjout extends StatelessWidget {
 // _VueBanniereRetard — bannière en haut de liste
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _VueBanniereRetard extends StatelessWidget {
+class _VueBanniereRetard extends StatefulWidget {
   final int nbRetard;
   final AnimationController animationController;
   final Animation<double> animation;
@@ -2003,45 +2090,107 @@ class _VueBanniereRetard extends StatelessWidget {
   });
 
   @override
+  State<_VueBanniereRetard> createState() => _VueBanniereRetardState();
+}
+
+class _VueBanniereRetardState extends State<_VueBanniereRetard>
+    with SingleTickerProviderStateMixin {
+  // Pulsation continue pour attirer l'attention sur les séances ratées.
+  late final AnimationController _pulseCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1100))
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() { _pulseCtrl.dispose(); super.dispose(); }
+
+  @override
   Widget build(BuildContext context) {
+    const rouge      = Color(0xFFEF4444);
+    const rougeSombre = Color(0xFFB91C1C);
+    final nb = widget.nbRetard;
+
     return AnimatedBuilder(
-      animation: animationController,
+      animation: widget.animationController,
       builder: (_, __) => FadeTransition(
-        opacity: animation,
+        opacity: widget.animation,
         child: Transform(
-          transform: Matrix4.translationValues(0.0, 30*(1.0-animation.value), 0.0),
-          child: GestureDetector(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          transform: Matrix4.translationValues(
+              0.0, 30 * (1.0 - widget.animation.value), 0.0),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            child: GestureDetector(
+              onTap: widget.onTap,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                  color:        const Color(0xFFFFF7ED),
-                  borderRadius: BorderRadius.circular(8),
+                  gradient: const LinearGradient(
+                    colors: [rouge, rougeSombre],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight,
+                  ),
+                  borderRadius: const BorderRadius.only(
+                    topLeft:     Radius.circular(8),
+                    bottomLeft:  Radius.circular(8),
+                    bottomRight: Radius.circular(8),
+                    topRight:    Radius.circular(40),
+                  ),
                   boxShadow: [BoxShadow(
-                    color:      const Color(0xFFD97706).withValues(alpha: 0.2),
-                    offset:     const Offset(1.1, 1.1),
-                    blurRadius: 10,
+                    color:      rouge.withValues(alpha: 0.45),
+                    offset:     const Offset(0, 6),
+                    blurRadius: 16,
                   )],
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.warning_amber_rounded,
-                        color: Color(0xFFD97706), size: 22),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        nbRetard == 1
-                            ? '1 séance en retard — appuie pour rattraper'
-                            : '$nbRetard séances en retard',
-                        style: TextStyle(
-                          fontFamily: _T.font, fontWeight: FontWeight.w600,
-                          fontSize: 13, color: const Color(0xFF92400E),
-                        )),
+                    // Icône pulsante dans un cercle translucide
+                    ScaleTransition(
+                      scale: Tween<double>(begin: 1.0, end: 1.14).animate(
+                        CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut)),
+                      child: Container(
+                        width: 40, height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.20),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.error_rounded,
+                            color: Colors.white, size: 22),
+                      ),
                     ),
-                    const Icon(Icons.chevron_right_rounded,
-                        color: Color(0xFFD97706), size: 20),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            nb == 1
+                                ? '1 séance manquée'
+                                : '$nb séances manquées',
+                            style: TextStyle(
+                              fontFamily: _T.font, fontWeight: FontWeight.w800,
+                              fontSize: 15, color: Colors.white)),
+                          const SizedBox(height: 2),
+                          Text('Appuie pour les rattraper',
+                            style: TextStyle(
+                              fontFamily: _T.font, fontWeight: FontWeight.w500,
+                              fontSize: 12,
+                              color: Colors.white.withValues(alpha: 0.85))),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 28, height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.20),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.arrow_forward_ios_rounded,
+                          color: Colors.white, size: 14),
+                    ),
                   ],
                 ),
               ),

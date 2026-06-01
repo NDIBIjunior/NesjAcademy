@@ -140,82 +140,58 @@ _WEEKDAY_JOUR = {v: k for k, v in _JOUR_WEEKDAY.items()}
 # Recalibrage ciblé d'une matière (sans toucher au reste du planning)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def recalibrer_sessions_matiere(eleve, matiere, chapitre_debut):
+def recalibrer_sessions_matiere(eleve, matiere, chapitre_cible):
     """
-    Recalibre les sessions futures d'UNE SEULE matière après que l'élève
-    a signalé que son prof est sur un autre chapitre.
+    Réaligne le planning d'UNE matière quand l'élève met à jour sa progression
+    scolaire — SANS détruire ses créneaux de travail.
 
-    Ce que fait cette fonction :
-      1. Récupère les sessions de découverte futures non complétées
-         pour cette matière, dans l'ordre chronologique.
-      2. Réassigne leur champ `chapitre` en partant de chapitre_debut
-         (même date, même tranche, même durée — seul le chapitre change).
-      3. Supprime les révisions espacées futures de cette matière
-         (elles référencent des chapitres désormais dépassés ; elles seront
-         recréées naturellement quand les nouvelles découvertes seront complétées).
+    ── Modèle « chapitre actuel unique » ───────────────────────────────────────
+    Toutes les séances futures non complétées de la matière pointent sur le
+    chapitre que l'élève révise en ce moment (chapitre_cible = chapitre marqué
+    « en cours »). On change UNIQUEMENT le chapitre visé ; le créneau reste.
 
-    Ce que cette fonction ne touche PAS (garantie) :
-      - Les dates prévues (date_prevue)
-      - Les tranches horaires (tranche_horaire)
-      - La durée, le type, le flag pilier
-      - Toutes les autres matières
-      - Les sessions déjà complétées
-      - Le PlanEtude lui-même
+    Exemple : l'élève termine le ch.4 et marque le ch.5 « en cours »
+      → toutes ses séances Maths à venir basculent du ch.4 au ch.5,
+        aux mêmes jours, aux mêmes heures, avec les mêmes durées et types.
+
+    Ce qui est conservé à l'identique (garantie) :
+      - les dates prévues (date_prevue) ;
+      - les tranches horaires (tranche_horaire) ;
+      - les durées, les types de séance, les flags (pilier, optionnelle…) ;
+      - toutes les autres matières ;
+      - les séances déjà complétées et les séances passées (l'historique).
+
+    NB : on réassigne TOUS les types de séance (révision immédiate, anticipation,
+    révisions espacées…), pas seulement les découvertes — car le générateur
+    fenêtre glissante (planifier_calendrier) ne crée pas de séances DECOUVERTE.
     """
     try:
         plan = eleve.plan_etude
     except PlanEtude.DoesNotExist:
-        return  # Pas de plan actif, rien à faire
+        return  # Pas de plan actif, rien à recalibrer
+
+    if chapitre_cible is None:
+        return
 
     aujourd_hui = date.today()
 
-    # Chapitres disponibles à partir de la position du prof (ordre croissant)
-    chapitres_restants = list(
-        Chapitre.objects.filter(
-            matiere=matiere,
-            ordre__gte=chapitre_debut.ordre,
-        ).order_by('ordre')
-    )
-
-    # Sessions de découverte futures non complétées pour cette matière uniquement
-    sessions_decouverte = list(
-        SessionEtude.objects.filter(
+    # Repointe toutes les séances futures non complétées de la matière sur le
+    # chapitre actuel. .exclude() évite les écritures inutiles (déjà à jour).
+    nb = (
+        SessionEtude.objects
+        .filter(
             plan=plan,
             chapitre__matiere=matiere,
             date_prevue__gte=aujourd_hui,
             completee=False,
-            type_session=SessionEtude.DECOUVERTE,
-        ).order_by('date_prevue')
+        )
+        .exclude(chapitre=chapitre_cible)
+        .update(chapitre=chapitre_cible)
     )
 
-    # Réassigner le chapitre de chaque session de découverte
-    for i, session in enumerate(sessions_decouverte):
-        if i < len(chapitres_restants):
-            session.chapitre = chapitres_restants[i]
-            session.save(update_fields=['chapitre'])
-        else:
-            # Plus de chapitres à couvrir → session orpheline supprimée
-            session.delete()
-
-    # Supprimer les révisions espacées futures de cette matière.
-    # Elles seront recréées naturellement après les nouvelles découvertes.
-    SessionEtude.objects.filter(
-        plan=plan,
-        chapitre__matiere=matiere,
-        date_prevue__gte=aujourd_hui,
-        completee=False,
-        type_session__in=[
-            SessionEtude.REVISION_J1,
-            SessionEtude.REVISION_J3,
-            SessionEtude.REVISION_J7,
-            SessionEtude.REVISION_J14,
-        ],
-    ).delete()
-
     logger.info(
-        "Recalibrage %s pour %s : %d sessions → chapitre '%s' (ordre %d)",
-        matiere.nom, eleve, len(sessions_decouverte),
-        chapitre_debut.titre, chapitre_debut.ordre,
+        "Recalibrage %s pour %s : %d séances futures repointées sur '%s' (ordre %d).",
+        matiere.nom, eleve, nb, chapitre_cible.titre, chapitre_cible.ordre,
     )
 
 

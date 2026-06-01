@@ -5,6 +5,7 @@ import 'package:shimmer/shimmer.dart';
 
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
+import '../../noyau/etat_seance.dart';
 import 'ecran_position_programme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +108,8 @@ class _EcranPlanningState extends State<EcranPlanning>
   bool    _chargement               = true;
   String? _erreur;
   bool    _afficherBannierePosition = false;
+  // Suivi de progression scolaire (chapitre actuel par matière)
+  List<Map<String, dynamic>> _suivi = [];
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -137,7 +140,7 @@ class _EcranPlanningState extends State<EcranPlanning>
 
     _debutSemaine = _dimancheDe(DateTime.now());
     _chargerSemaine(_debutSemaine);
-    _verifierPositionProgramme();
+    _chargerSuivi();
   }
 
   @override
@@ -174,17 +177,45 @@ class _EcranPlanningState extends State<EcranPlanning>
 
   // ── Réseau (LOGIQUE INCHANGÉE) ─────────────────────────────────────────────
 
-  Future<void> _verifierPositionProgramme() async {
+  Future<void> _chargerSuivi() async {
     try {
-      final rep = await ClientApi.get(Constantes.urlPositionProgramme);
+      final rep = await ClientApi.get(Constantes.urlSuiviChapitres);
       if (rep.statusCode == 200) {
         final liste = jsonDecode(utf8.decode(rep.bodyBytes)) as List;
         if (mounted) {
-          setState(() => _afficherBannierePosition =
-              liste.any((m) => m['besoin_mise_a_jour'] == true));
+          setState(() {
+            _suivi = liste.cast<Map<String, dynamic>>();
+            _afficherBannierePosition =
+                _suivi.any((m) => m['besoin_mise_a_jour'] == true);
+          });
         }
       }
     } catch (_) {}
+  }
+
+  // Ouvre l'éditeur de progression puis rafraîchit le suivi + le planning.
+  // matiereId fourni → action ciblée sur cette seule matière.
+  Future<void> _ouvrirEditeurPosition({int? matiereId}) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EcranPositionProgramme(matiereId: matiereId)),
+    );
+    if (result == true && mounted) {
+      await _chargerSuivi();
+      await _chargerSemaine(_debutSemaine);
+    }
+  }
+
+  // Chapitre actuel (statut « en cours ») d'une matière, sinon null
+  Map<String, dynamic>? _chapitreActuel(Map<String, dynamic> matiere) {
+    final actuel = matiere['chapitre_actuel'] as Map<String, dynamic>?;
+    if (actuel != null) return actuel;
+    final chapitres = (matiere['chapitres'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    for (final c in chapitres) {
+      if (c['statut_classe'] == 'en_cours') return c;
+    }
+    return null;
   }
 
   Future<void> _chargerSemaine(DateTime dimanche) async {
@@ -230,51 +261,22 @@ class _EcranPlanningState extends State<EcranPlanning>
     _chargerSemaine(prev);
   }
 
-  Future<void> _marquerFait(int sessionId) async {
-    try {
-      final rep = await ClientApi.post(
-        '${Constantes.urlSessions}$sessionId/completer/',
-        {}, avecToken: true,
-      );
-      if (rep.statusCode == 200) {
-        setState(() {
-          for (final liste in _donnees.values) {
-            final idx = liste.indexWhere((s) => s['id'] == sessionId);
-            if (idx != -1) {
-              liste[idx] = {...liste[idx], 'completee': true};
-              break;
-            }
-          }
-        });
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Session marquée comme terminée !'),
-          backgroundColor: Color(0xFF10B981),
-          duration: Duration(seconds: 2),
-        ));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(e.toString().replaceFirst('Exception: ', '')),
-        backgroundColor: Colors.red,
-      ));
-    }
-  }
-
   void _afficherDetails(Map<String, dynamic> session, DateTime date) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
       isScrollControlled: true,
+      isDismissible: true,   // clic en dehors → ferme
+      enableDrag:    true,   // glisser vers le bas → ferme
+      // Plafonner la hauteur : garde toujours une zone « dehors » cliquable.
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.88,
+      ),
       builder: (_) => _FeuilleDetailSession(
-        session:      session,
-        dateSession:  date,
-        nomJour:      _nomJourComplet(date.weekday),
-        onMarquerFait: session['completee'] == true ? null : () async {
-          Navigator.pop(context);
-          await _marquerFait(session['id'] as int);
-        },
+        session:     session,
+        dateSession: date,
+        nomJour:     _nomJourComplet(date.weekday),
       ),
     );
   }
@@ -320,6 +322,10 @@ class _EcranPlanningState extends State<EcranPlanning>
                 // Bannière position programme
                 if (_afficherBannierePosition)
                   _buildBannierePosition(),
+
+                // Section « Où en est ta classe » (chapitre actuel par matière)
+                if (_suivi.isNotEmpty)
+                  _buildSectionClasse(),
 
                 // Vue semaine en colonnes
                 _buildVueSemaine(),
@@ -546,19 +552,77 @@ class _EcranPlanningState extends State<EcranPlanning>
 
   // ── Sections diverses ──────────────────────────────────────────────────────
 
+  // ── Section « Où en est ta classe » ─────────────────────────────────────
+  // Cartes horizontales : une par matière, montrant le chapitre actuel et la
+  // part de chapitres terminés. Tap → éditeur de progression.
+  Widget _buildSectionClasse() {
+    return AnimatedBuilder(
+      animation: animationController!,
+      builder: (_, __) {
+        final anim = Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: animationController!,
+            curve:  const Interval(0.05, 0.9, curve: Curves.fastOutSlowIn),
+          ),
+        );
+        return FadeTransition(
+          opacity: anim,
+          child: Transform(
+            transform: Matrix4.translationValues(0.0, 24 * (1.0 - anim.value), 0.0),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
+                    child: Row(
+                      children: [
+                        Icon(Icons.menu_book_rounded, size: 18, color: _T.grey),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('Où en est ta classe',
+                            style: _T.ts(size: 16, weight: FontWeight.w700,
+                                color: _T.darkerText)),
+                        ),
+                        GestureDetector(
+                          onTap: () => _ouvrirEditeurPosition(),
+                          child: Text('Mettre à jour',
+                            style: _T.ts(size: 12, weight: FontWeight.w700,
+                                color: _T.nearlyDarkBlue)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 104,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      itemCount: _suivi.length,
+                      itemBuilder: (_, i) => _CarteClasse(
+                        matiere:  _suivi[i],
+                        actuel:   _chapitreActuel(_suivi[i]),
+                        onTap:    () => _ouvrirEditeurPosition(
+                            matiereId: _suivi[i]['matiere_id'] as int),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildBannierePosition() {
     return Padding(
       padding: const EdgeInsets.only(left: 24, right: 24, bottom: 18),
       child: GestureDetector(
-        onTap: () async {
-          final result = await Navigator.push<bool>(
-            context,
-            MaterialPageRoute(builder: (_) => const EcranPositionProgramme()),
-          );
-          if (result == true && mounted) {
-            setState(() => _afficherBannierePosition = false);
-          }
-        },
+        onTap: () => _ouvrirEditeurPosition(),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -763,14 +827,18 @@ class _BlocSession extends StatelessWidget {
     final completee  = session['completee']    as bool? ?? false;
     final estPilier  = session['est_pilier']   as bool? ?? false;
     final estReport  = session['est_reportee'] as bool? ?? false;
+    final manquee    = !completee && estManquee(session);
     final heureDebut = session['heure_debut_session'] as String?
         ?? (session['tranche'] as Map<String, dynamic>?)?['heure_debut'] as String?;
     final heureFin   = session['heure_fin_session'] as String?
         ?? (session['tranche'] as Map<String, dynamic>?)?['heure_fin'] as String?;
 
-    const couleurReport = Color(0xFF9B1C1C);
-    final couleurBase   = estReport && !completee ? couleurReport : couleur;
-    final couleurEff    = completee ? _T.lightText : couleurBase;
+    const couleurReport  = Color(0xFF9B1C1C);
+    const couleurManquee = Color(0xFFEF4444); // rouge vif — séance manquée
+    final couleurBase    = manquee
+        ? couleurManquee
+        : (estReport && !completee ? couleurReport : couleur);
+    final couleurEff     = completee ? _T.lightText : couleurBase;
 
     return GestureDetector(
       onTap: onTap,
@@ -780,14 +848,17 @@ class _BlocSession extends StatelessWidget {
         decoration: BoxDecoration(
           color: completee
               ? _T.background
-              : couleurBase.withValues(alpha: 0.10),
+              : couleurBase.withValues(alpha: manquee ? 0.16 : 0.10),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: completee
                 ? _T.grey.withValues(alpha: 0.15)
                 : couleurBase.withValues(
-                    alpha: (estPilier || estReport) ? 0.55 : 0.25),
-            width: (estPilier || estReport) && !completee ? 1.5 : 1.0,
+                    alpha: manquee
+                        ? 0.95
+                        : ((estPilier || estReport) ? 0.55 : 0.25)),
+            width: (manquee || ((estPilier || estReport) && !completee))
+                ? 1.5 : 1.0,
           ),
         ),
         child: Column(
@@ -822,6 +893,9 @@ class _BlocSession extends StatelessWidget {
                 if (completee)
                   Icon(Icons.check_circle_rounded,
                       size: 11, color: _T.green)
+                else if (manquee)
+                  const Icon(Icons.error_rounded,
+                      size: 12, color: couleurManquee)
                 else if (estReport)
                   Container(
                     width: 7, height: 7,
@@ -872,23 +946,119 @@ class _ShimmerBox extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// _CarteClasse — carte compacte « chapitre actuel » d'une matière
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CarteClasse extends StatelessWidget {
+  final Map<String, dynamic>  matiere;
+  final Map<String, dynamic>? actuel;
+  final VoidCallback          onTap;
+
+  const _CarteClasse({
+    required this.matiere,
+    required this.actuel,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final nom        = matiere['matiere_nom'] as String;
+    final compteurs  = matiere['compteurs'] as Map<String, dynamic>? ?? const {};
+    final nbTotal    = (compteurs['nb_total']    as int?) ?? 0;
+    final nbTermine  = (compteurs['nb_termines'] as int?) ?? 0;
+    final besoinMaj  = matiere['besoin_mise_a_jour'] == true;
+    final titreChap  = actuel?['titre'] as String?;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width:  190,
+        margin: const EdgeInsets.only(right: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _T.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [_T.shadow],
+          border: besoinMaj
+              ? Border.all(color: _T.amber.withValues(alpha: 0.5), width: 1.2)
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(nom,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: _T.ts(size: 13, weight: FontWeight.w800,
+                        color: _T.darkerText)),
+                ),
+                if (besoinMaj)
+                  const Icon(Icons.error_outline_rounded,
+                      size: 15, color: _T.amber),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('EN CE MOMENT',
+              style: _T.ts(size: 9, weight: FontWeight.w700,
+                  color: _T.lightText, spacing: 0.6)),
+            const SizedBox(height: 3),
+            Expanded(
+              child: Text(
+                titreChap ?? 'Non renseigné',
+                maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: _T.ts(
+                  size: 12.5,
+                  weight: FontWeight.w600,
+                  height: 1.25,
+                  color: titreChap != null ? _T.nearlyDarkBlue : _T.lightText,
+                )),
+            ),
+            Row(
+              children: [
+                Icon(Icons.check_circle_rounded, size: 13, color: _T.green),
+                const SizedBox(width: 4),
+                Text('$nbTermine/$nbTotal terminés',
+                  style: _T.ts(size: 11, weight: FontWeight.w600,
+                      color: _T.lightText)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // _FeuilleDetailSession — BottomSheet détail (INCHANGÉ)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _FeuilleDetailSession extends StatelessWidget {
+class _FeuilleDetailSession extends StatefulWidget {
   final Map<String, dynamic> session;
   final DateTime    dateSession;
   final String      nomJour;
-  final VoidCallback? onMarquerFait;
 
   const _FeuilleDetailSession({
     required this.session, required this.dateSession,
-    required this.nomJour, required this.onMarquerFait,
+    required this.nomJour,
   });
+
+  @override
+  State<_FeuilleDetailSession> createState() => _FeuilleDetailSessionState();
+}
+
+class _FeuilleDetailSessionState extends State<_FeuilleDetailSession>
+    with SingleTickerProviderStateMixin {
+  // Entrée douce du contenu : fondu + légère montée, en complément du
+  // glissement du bottom sheet → arrivée tout en souplesse.
+  late final AnimationController _entree;
+  late final Animation<double>   _fade;
 
   static const _infosType = {
     'decouverte': (
-      icone: Icons.school_rounded, label: 'Découverte',
+      icone: Icons.lightbulb_outline_rounded, label: 'Découverte',
       explication: 'Première étude de ce chapitre. Prends des notes et comprends bien le cours.',
     ),
     'revision_immediate': (
@@ -908,10 +1078,22 @@ class _FeuilleDetailSession extends StatelessWidget {
       explication: 'Révision 1 semaine après — renforce la mémoire à moyen terme.',
     ),
     'revision_j14': (
-      icone: Icons.replay_rounded, label: 'Révision J+14',
-      explication: 'Révision 2 semaines après — transfert en mémoire longue durée (Ebbinghaus).',
+      icone: Icons.workspace_premium_rounded, label: 'Révision J+14',
+      explication: 'Révision 2 semaines après — transfert en mémoire longue durée.',
     ),
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _entree = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 520));
+    _fade = CurvedAnimation(parent: _entree, curve: Curves.easeOutCubic);
+    _entree.forward();
+  }
+
+  @override
+  void dispose() { _entree.dispose(); super.dispose(); }
 
   String _formatDate(DateTime d, String nomJour) {
     const mois = [
@@ -921,8 +1103,29 @@ class _FeuilleDetailSession extends StatelessWidget {
     return '$nomJour ${d.day} ${mois[d.month]} ${d.year}';
   }
 
+  // Petit "chip" translucide pour le hero (icône + texte sur le dégradé).
+  Widget _chipHero(IconData icone, String texte) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color:        Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icone, size: 13, color: Colors.white),
+          const SizedBox(width: 5),
+          Text(texte,
+            style: _T.ts(size: 11.5, weight: FontWeight.w600, color: Colors.white)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final session    = widget.session;
     final chapitre   = session['chapitre']      as Map<String, dynamic>;
     final titre      = chapitre['titre']        as String;
     final matiere    = chapitre['matiere_nom']  as String;
@@ -935,7 +1138,6 @@ class _FeuilleDetailSession extends StatelessWidget {
     final tranche          = session['tranche']             as Map<String, dynamic>?;
     final necessExo        = chapitre['necessite_exercices'] == true;
     final estPilier        = session['est_pilier']          as bool? ?? false;
-    final estRevision      = type.startsWith('revision');
 
     final info = _infosType[type] ?? (
       icone: Icons.help_outline_rounded, label: type, explication: '',
@@ -944,256 +1146,207 @@ class _FeuilleDetailSession extends StatelessWidget {
     final h = duree ~/ 60; final m = duree % 60;
     final labelDuree = h > 0
         ? '${h}h${m > 0 ? m.toString().padLeft(2, '0') : ''}'
-        : '$m minutes';
+        : '$m min';
 
-    final Color accent = estPilier
-        ? const Color(0xFFB45309)
-        : type == 'revision_immediate'
-            ? const Color(0xFFEA580C)
-            : estRevision
-                ? const Color(0xFFF59E0B)
-                : _T.nearlyDarkBlue;
+    // Heure (session datée sinon tranche)
+    String? creneau;
+    if (heureDebutSess != null) {
+      creneau = '$heureDebutSess → $heureFinSess';
+    } else if (tranche != null) {
+      creneau = '${tranche['heure_debut']} → ${tranche['heure_fin']}';
+    }
 
     return Container(
       decoration: const BoxDecoration(
-        color:        Color(0xFFFFFFFF),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        color:        _T.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.fromLTRB(
-          24, 16, 24, MediaQuery.of(context).padding.bottom + 24),
+          20, 12, 20, MediaQuery.of(context).padding.bottom + 22),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize:       MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Poignée
             Center(child: Container(
-              width: 40, height: 4,
+              width: 44, height: 5,
               decoration: BoxDecoration(
                 color:        const Color(0xFFD6DAE2),
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(3),
               ),
             )),
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
 
-            if (estPilier) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color:        const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [_T.shadow],
+            // Contenu animé (fondu + légère montée)
+            FadeTransition(
+              opacity: _fade,
+              child: AnimatedBuilder(
+                animation: _entree,
+                builder: (_, child) => Transform.translate(
+                  offset: Offset(0, 14 * (1 - _entree.value)),
+                  child: child,
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.star_rounded, size: 16, color: Color(0xFFB45309)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text('Session dédiée — créneau fixe chaque semaine.',
-                        style: _T.ts(size: 12, weight: FontWeight.w600,
-                            color: const Color(0xFFB45309), height: 1.4)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-            ],
-
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [
-                  accent.withValues(alpha: 0.10),
-                  accent.withValues(alpha: 0.04),
-                ]),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: accent.withValues(alpha: 0.25)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(info.icone, size: 16, color: accent),
-                      const SizedBox(width: 6),
-                      Text(info.label,
-                        style: _T.ts(size: 13, weight: FontWeight.w700, color: accent)),
-                      if (completee) ...[
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color:        _T.green.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
+                    // ── Hero dégradé (couleurs du thème) ──────────────────
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [_T.nearlyDarkBlue, _T.purple],
+                          begin: Alignment.topLeft, end: Alignment.bottomRight,
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft:     Radius.circular(18),
+                          bottomLeft:  Radius.circular(18),
+                          bottomRight: Radius.circular(18),
+                          topRight:    Radius.circular(44),
+                        ),
+                        boxShadow: [BoxShadow(
+                          color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
+                          offset:     const Offset(0, 8),
+                          blurRadius: 18,
+                        )],
+                      ),
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
                             children: [
-                              const Icon(Icons.check_circle_rounded,
-                                  size: 12, color: Color(0xFF10B981)),
-                              const SizedBox(width: 4),
-                              Text('Terminée',
-                                style: _T.ts(size: 11, weight: FontWeight.w600,
-                                    color: const Color(0xFF10B981))),
+                              Container(
+                                width: 46, height: 46,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.20),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(info.icone, color: Colors.white, size: 24),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${matiere.toUpperCase()} · ${info.label}',
+                                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                                      style: _T.ts(size: 11.5, weight: FontWeight.w700,
+                                          spacing: 0.4,
+                                          color: Colors.white.withValues(alpha: 0.85))),
+                                    const SizedBox(height: 3),
+                                    Text(titre,
+                                      maxLines: 2, overflow: TextOverflow.ellipsis,
+                                      style: _T.ts(size: 18, weight: FontWeight.w800,
+                                          color: Colors.white, height: 1.2)),
+                                  ],
+                                ),
+                              ),
+                              if (completee) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white, shape: BoxShape.circle),
+                                  child: const Icon(Icons.check_rounded,
+                                      size: 16, color: _T.green),
+                                ),
+                              ],
                             ],
                           ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.calendar_today_rounded, size: 14, color: _T.lightText),
-                      const SizedBox(width: 6),
-                      Text(_formatDate(dateSession, nomJour),
-                        style: _T.ts(size: 13, color: _T.lightText)),
-                    ],
-                  ),
-                  if (heureDebutSess != null) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.access_time_rounded, size: 14, color: _T.lightText),
-                        const SizedBox(width: 6),
-                        Text('$heureDebutSess → $heureFinSess  ·  $labelDuree',
-                          style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.darkText)),
-                      ],
-                    ),
-                  ] else if (tranche != null) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.access_time_rounded, size: 14, color: _T.lightText),
-                        const SizedBox(width: 6),
-                        Text('${tranche['heure_debut']} → ${tranche['heure_fin']}  ·  $labelDuree',
-                          style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.darkText)),
-                      ],
-                    ),
-                  ] else ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.timer_outlined, size: 14, color: _T.lightText),
-                        const SizedBox(width: 6),
-                        Text(labelDuree,
-                          style: _T.ts(size: 13, weight: FontWeight.w600, color: _T.darkText)),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            Row(
-              children: [
-                Icon(Icons.book_rounded, size: 18, color: _T.lightText),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(matiere,
-                    style: _T.ts(size: 15, weight: FontWeight.bold, color: _T.darkerText)),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color:        _T.nearlyDarkBlue.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text('Coefficient $coeff',
-                    style: _T.ts(size: 12, weight: FontWeight.w600,
-                        color: _T.nearlyDarkBlue)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _T.background, borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('CHAPITRE',
-                    style: _T.ts(size: 10, weight: FontWeight.w700,
-                        color: _T.lightText, spacing: 1.0)),
-                  const SizedBox(height: 6),
-                  Text(titre,
-                    style: _T.ts(size: 16, weight: FontWeight.bold,
-                        color: _T.darkerText, height: 1.3)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            if (info.explication.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color:        _T.nearlyDarkBlue.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline_rounded, color: _T.nearlyDarkBlue, size: 18),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(info.explication,
-                        style: _T.ts(size: 13, color: _T.darkText, height: 1.4)),
-                    ),
-                  ],
-                ),
-              ),
-
-            if (necessExo) ...[
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED), borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('💡', style: TextStyle(fontSize: 16)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Méthode : commence par relire ton cours (30–45 min), puis passe aux exercices.',
-                        style: _T.ts(size: 13, color: const Color(0xFF92400E), height: 1.4)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 24),
-
-            SizedBox(
-              width: double.infinity, height: 52,
-              child: completee
-                  ? OutlinedButton.icon(
-                      onPressed: null,
-                      icon:  const Icon(Icons.check_circle_rounded),
-                      label: const Text('Session déjà terminée'),
-                    )
-                  : ElevatedButton.icon(
-                      onPressed: onMarquerFait,
-                      icon:  const Icon(Icons.check_rounded),
-                      label: const Text('Marquer comme fait ✓'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        textStyle: _T.ts(size: 15, weight: FontWeight.bold),
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 8, runSpacing: 8,
+                            children: [
+                              _chipHero(Icons.calendar_today_rounded,
+                                  _formatDate(widget.dateSession, widget.nomJour)),
+                              if (creneau != null)
+                                _chipHero(Icons.access_time_rounded, creneau),
+                              _chipHero(Icons.timer_outlined, labelDuree),
+                              _chipHero(Icons.star_border_rounded, 'Coef $coeff'),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
+
+                    if (estPilier) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color:        const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.star_rounded, size: 16, color: Color(0xFFB45309)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text('Session dédiée — créneau fixe chaque semaine.',
+                                style: _T.ts(size: 12, weight: FontWeight.w600,
+                                    color: const Color(0xFFB45309), height: 1.4)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    // ── Explication du type ───────────────────────────────
+                    if (info.explication.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color:        _T.nearlyDarkBlue.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.info_outline_rounded,
+                                color: _T.nearlyDarkBlue, size: 18),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(info.explication,
+                                style: _T.ts(size: 13, color: _T.darkText, height: 1.45)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    // ── Conseil exercices ─────────────────────────────────
+                    if (necessExo) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color:        const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('💡', style: TextStyle(fontSize: 16)),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Méthode : commence par relire ton cours (30–45 min), puis passe aux exercices.',
+                                style: _T.ts(size: 13, color: const Color(0xFF92400E), height: 1.45)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 6),
+                  ],
+                ),
+              ),
             ),
           ],
         ),

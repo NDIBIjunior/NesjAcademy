@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Documents de reference (PDF programmes officiels, captures) — hors depot
+programmes officiels/
+*.pdf
+accueil.png

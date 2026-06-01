@@ -162,6 +162,27 @@ class ProgressionChapitre(models.Model):
         related_name="progressions",
     )
     statut = models.CharField(max_length=10, choices=STATUTS, default=PAS_VU)
+
+    # ── Avancement EN CLASSE (déclaré par l'élève — fiable) ──────────────────
+    # Indépendant de l'ordre officiel des chapitres : au Cameroun les profs ne
+    # suivent pas toujours la progression logique (ex : ch.4 avant le ch.3).
+    # On stocke donc explicitement l'état de CHAQUE chapitre, sans jamais le
+    # déduire de sa position. Distinct de `statut` (maîtrise personnelle).
+    CLASSE_NON_ABORDE = "non_aborde"
+    CLASSE_EN_COURS   = "en_cours"
+    CLASSE_TERMINE    = "termine"
+    STATUTS_CLASSE = [
+        (CLASSE_NON_ABORDE, "Pas encore abordé en classe"),
+        (CLASSE_EN_COURS,   "En cours en classe"),
+        (CLASSE_TERMINE,    "Terminé en classe"),
+    ]
+    statut_classe = models.CharField(
+        max_length=12,
+        choices=STATUTS_CLASSE,
+        default=CLASSE_NON_ABORDE,
+        help_text="Avancement du prof sur ce chapitre, déclaré par l'élève (fiable, indépendant de l'ordre)",
+    )
+
     date_derniere_revision = models.DateField(
         null=True,
         blank=True,

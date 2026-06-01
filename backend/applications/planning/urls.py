@@ -16,6 +16,7 @@ from .views import (
     VueReporterSession,
     VueResumePlan,
     VueSeancesRetard,
+    VueSuiviChapitres,
     VueToggleMatieresPlan,
 )
 
@@ -42,6 +43,9 @@ urlpatterns = [
 
     # Position dans le programme (suivi prof)
     path("position-programme/", VuePositionProgramme.as_view(), name="planning-position-programme"),
+
+    # Suivi détaillé des chapitres (consultation lecture seule)
+    path("suivi-chapitres/", VueSuiviChapitres.as_view(), name="planning-suivi-chapitres"),
 
     # Séances en retard
     path("retard/", VueSeancesRetard.as_view(), name="planning-retard"),
