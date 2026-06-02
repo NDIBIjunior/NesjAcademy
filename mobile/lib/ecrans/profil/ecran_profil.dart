@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../composants/squelette.dart';
 import '../../donnees/api/client_api.dart';
+import '../../donnees/local/cache_memoire.dart';
 import '../../donnees/local/stockage_local.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/routes.dart';
@@ -95,6 +96,7 @@ class _EcranProfilState extends State<EcranProfil>
   double topBarOpacity = 0.0;
 
   late Future<_DonneesProfil> _futureData;
+  _DonneesProfil? _cache; // affiché instantanément en attendant le réseau
   bool _regenerationEnCours = false;
 
   @override
@@ -120,6 +122,7 @@ class _EcranProfilState extends State<EcranProfil>
         if (topBarOpacity != 0.0) setState(() => topBarOpacity = 0.0);
       }
     });
+    _cache = CacheMemoire.instance.lire<_DonneesProfil>('profil');
     _futureData = _charger();
   }
 
@@ -135,9 +138,11 @@ class _EcranProfilState extends State<EcranProfil>
   Future<_DonneesProfil> _charger() async {
     final rep = await ClientApi.get(Constantes.urlProfilComplet);
     if (rep.statusCode >= 400) throw Exception('Erreur ${rep.statusCode}');
-    return _DonneesProfil.fromJson(
+    final data = _DonneesProfil.fromJson(
       jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>,
     );
+    CacheMemoire.instance.ecrire('profil', data);
+    return data;
   }
 
   Future<void> _rafraichir() async {
@@ -300,17 +305,19 @@ class _EcranProfilState extends State<EcranProfil>
         body: FutureBuilder<_DonneesProfil>(
           future: _futureData,
           builder: (_, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
+            // Données fraîches si dispo, sinon le cache (affichage instantané).
+            final data = snap.data ?? _cache;
+            if (data == null) {
+              if (snap.hasError) {
+                return _buildErreur(
+                    snap.error.toString().replaceFirst('Exception: ', ''));
+              }
               return const SquelettePage();
-            }
-            if (snap.hasError) {
-              return _buildErreur(
-                  snap.error.toString().replaceFirst('Exception: ', ''));
             }
             animationController?.forward();
             return Stack(
               children: [
-                _buildContenu(snap.data!),
+                _buildContenu(data),
                 _getAppBarUI(),
               ],
             );

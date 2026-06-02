@@ -6,6 +6,7 @@ import 'package:shimmer/shimmer.dart';
 
 import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
+import '../../donnees/local/cache_memoire.dart';
 import '../../donnees/local/stockage_local.dart';
 import '../../donnees/modeles/utilisateur.dart';
 import '../../noyau/constantes.dart';
@@ -134,6 +135,13 @@ class _EcranAccueilState extends State<EcranAccueil>
       }
     });
 
+    // Affichage instantané depuis le cache (si présent) → pas de shimmer,
+    // l'animation rejoue. Le rafraîchissement réseau se fait juste après.
+    final cache = CacheMemoire.instance.lire<_DonneesAccueil>('accueil');
+    if (cache != null) {
+      _donnees = cache;
+      addAllListData();
+    }
     _chargerDonnees();
   }
 
@@ -338,6 +346,7 @@ class _EcranAccueilState extends State<EcranAccueil>
           );
           addAllListData();
         });
+        CacheMemoire.instance.ecrire('accueil', _donnees);
         return;
       }
 
@@ -387,6 +396,7 @@ class _EcranAccueilState extends State<EcranAccueil>
         );
         addAllListData();
       });
+      CacheMemoire.instance.ecrire('accueil', _donnees);
       animationController?.forward();
     } catch (_) {}
   }

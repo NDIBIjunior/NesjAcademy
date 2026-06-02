@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 
 import '../../donnees/api/client_api.dart';
+import '../../donnees/local/cache_memoire.dart';
 import '../../noyau/constantes.dart';
 import '../../noyau/etat_seance.dart';
 import 'ecran_position_programme.dart';
@@ -178,13 +179,23 @@ class _EcranPlanningState extends State<EcranPlanning>
   // ── Réseau (LOGIQUE INCHANGÉE) ─────────────────────────────────────────────
 
   Future<void> _chargerSuivi() async {
+    // Cache d'abord → la bannière de position s'affiche sans attendre.
+    final cache = CacheMemoire.instance.lire<List<Map<String, dynamic>>>('planning_suivi');
+    if (cache != null && mounted) {
+      setState(() {
+        _suivi = cache;
+        _afficherBannierePosition = _suivi.any((m) => m['besoin_mise_a_jour'] == true);
+      });
+    }
     try {
       final rep = await ClientApi.get(Constantes.urlSuiviChapitres);
       if (rep.statusCode == 200) {
-        final liste = jsonDecode(utf8.decode(rep.bodyBytes)) as List;
+        final liste = (jsonDecode(utf8.decode(rep.bodyBytes)) as List)
+            .cast<Map<String, dynamic>>();
+        CacheMemoire.instance.ecrire('planning_suivi', liste);
         if (mounted) {
           setState(() {
-            _suivi = liste.cast<Map<String, dynamic>>();
+            _suivi = liste;
             _afficherBannierePosition =
                 _suivi.any((m) => m['besoin_mise_a_jour'] == true);
           });
@@ -219,33 +230,49 @@ class _EcranPlanningState extends State<EcranPlanning>
   }
 
   Future<void> _chargerSemaine(DateTime dimanche) async {
-    setState(() { _chargement = true; _erreur = null; });
+    // Cache d'abord (par semaine) → affichage instantané, pas de shimmer.
+    final cle   = 'planning_${_iso(dimanche)}';
+    final cache = CacheMemoire.instance
+        .lire<Map<String, List<Map<String, dynamic>>>>(cle);
+    final aCache = cache != null;
+    if (aCache) {
+      setState(() { _donnees = cache; _chargement = false; _erreur = null; });
+      animationController?.forward(); // anime le contenu en cache
+    } else {
+      setState(() { _chargement = true; _erreur = null; });
+    }
+
     try {
       final rep = await ClientApi.get(
         '${Constantes.urlPlanningSemaine}?date_debut=${_iso(dimanche)}',
       );
       if (rep.statusCode == 200) {
         final raw = jsonDecode(utf8.decode(rep.bodyBytes)) as Map<String, dynamic>;
-        setState(() {
-          _donnees    = raw.map((k, v) =>
-              MapEntry(k, (v as List).cast<Map<String, dynamic>>()));
-          _chargement = false;
-        });
+        final donnees = raw.map((k, v) =>
+            MapEntry(k, (v as List).cast<Map<String, dynamic>>()));
+        CacheMemoire.instance.ecrire(cle, donnees);
+        setState(() { _donnees = donnees; _chargement = false; });
       } else if (rep.statusCode == 404) {
+        CacheMemoire.instance.ecrire(cle, <String, List<Map<String, dynamic>>>{});
         setState(() { _donnees = {}; _chargement = false; });
-      } else {
+      } else if (!aCache) {
         setState(() {
           _erreur     = 'Erreur de chargement (${rep.statusCode}).';
           _chargement = false;
         });
       }
-      animationController?.reset();
-      animationController?.forward();
+      // Entrée animée uniquement au premier chargement (pas sur refresh silencieux).
+      if (!aCache) {
+        animationController?.reset();
+        animationController?.forward();
+      }
     } catch (_) {
-      setState(() {
-        _erreur     = 'Impossible de charger le planning.';
-        _chargement = false;
-      });
+      if (!aCache) {
+        setState(() {
+          _erreur     = 'Impossible de charger le planning.';
+          _chargement = false;
+        });
+      }
     }
   }
 

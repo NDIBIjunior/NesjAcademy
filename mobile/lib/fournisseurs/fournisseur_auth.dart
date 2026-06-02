@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../donnees/api/client_api.dart';
+import '../donnees/local/cache_memoire.dart';
 import '../donnees/local/stockage_local.dart';
 import '../donnees/modeles/utilisateur.dart';
 import '../noyau/constantes.dart';
@@ -92,6 +93,7 @@ class FournisseurAuth extends ChangeNotifier {
   // ── Déconnexion ───────────────────────────────────────────────────────────
   Future<void> deconnecter() async {
     await StockageLocal.tout_effacer();
+    CacheMemoire.instance.vider();   // évite qu'un autre user voie ces données
     _utilisateur = null;
     notifyListeners();
   }
