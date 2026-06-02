@@ -534,7 +534,7 @@ class _TexteMachine extends StatefulWidget {
   final TextStyle style;
   final Duration  vitesse;
   const _TexteMachine(this.texte,
-      {required this.style, this.vitesse = const Duration(milliseconds: 20)});
+      {required this.style, this.vitesse = const Duration(milliseconds: 36)});
 
   @override
   State<_TexteMachine> createState() => _TexteMachineState();

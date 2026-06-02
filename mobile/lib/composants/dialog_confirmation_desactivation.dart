@@ -110,12 +110,16 @@ class _DialogDesactivation extends StatelessWidget {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: const Text(
-                        'Annuler',
-                        style: TextStyle(
-                          fontFamily: _T.font,
-                          fontWeight: FontWeight.w600,
-                          color:      _T.grey,
+                      child: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Annuler',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontFamily: _T.font,
+                            fontWeight: FontWeight.w600,
+                            color:      _T.grey,
+                          ),
                         ),
                       ),
                     ),
@@ -134,11 +138,15 @@ class _DialogDesactivation extends StatelessWidget {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: const Text(
-                        'Désactiver',
-                        style: TextStyle(
-                          fontFamily: _T.font,
-                          fontWeight: FontWeight.w700,
+                      child: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Désactiver',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontFamily: _T.font,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),

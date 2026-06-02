@@ -9,6 +9,8 @@ abstract class Constantes {
   // 127.0.0.1 pour Chrome (flutter run -d chrome)
   // 10.0.2.2   pour émulateur Android
   // <IP locale> pour un vrai appareil (ex: 192.168.1.10)
+  // Test PC (Chrome / Windows). AVANT de générer l'APK, remettre l'URL ngrok :
+  //   'https://semiround-truncated-edmond.ngrok-free.dev/api'
   static const String _base = 'http://127.0.0.1:8000/api';
 
   // Auth
@@ -21,6 +23,7 @@ abstract class Constantes {
   static const String urlRafraichirToken   = '$_base/auth/token/refresh/';
 
   // Planning
+  static const String urlNiveaux           = '$_base/planning/niveaux/';
   static const String urlObjectifs         = '$_base/planning/objectifs/';
   static const String urlDisponibilite     = '$_base/planning/disponibilite/';
   static const String urlEmploiDuTemps    = '$_base/planning/emploi-du-temps/';

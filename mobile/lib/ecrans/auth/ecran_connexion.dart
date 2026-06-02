@@ -313,7 +313,7 @@ class _EcranConnexionState extends State<EcranConnexion>
             const SizedBox(height: 16),
 
             const Text(
-              'Bon retour 👋',
+              'Bon retour',
               style: TextStyle(
                 fontFamily:    _T.font,
                 fontSize:      36,

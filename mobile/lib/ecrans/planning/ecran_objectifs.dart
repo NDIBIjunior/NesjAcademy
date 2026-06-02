@@ -474,7 +474,7 @@ class _PresentationNesiaState extends State<_PresentationNesia>
                 fontFamily: _T.font, fontSize: 15.5, fontWeight: FontWeight.w400,
                 color: _T.lightText, height: 1.6),
               textAlign: TextAlign.center,
-              vitesse: const Duration(milliseconds: 24),
+              vitesse: const Duration(milliseconds: 38),
               onTermine: () { if (mounted) setState(() => _fini = true); },
             ),
           )),
@@ -591,7 +591,7 @@ class _TexteMachine extends StatefulWidget {
   final VoidCallback? onTermine;
   const _TexteMachine(this.texte,
       {required this.style, this.textAlign = TextAlign.start,
-       this.vitesse = const Duration(milliseconds: 18), this.onTermine});
+       this.vitesse = const Duration(milliseconds: 36), this.onTermine});
 
   @override
   State<_TexteMachine> createState() => _TexteMachineState();

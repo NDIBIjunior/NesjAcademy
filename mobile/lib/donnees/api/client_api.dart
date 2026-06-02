@@ -9,7 +9,11 @@ import '../local/stockage_local.dart';
 // silencieux avec le refresh token avant de renvoyer la réponse au widget.
 class ClientApi {
   static Future<Map<String, String>> _entetes({bool avecToken = true}) async {
-    final entetes = {'Content-Type': 'application/json'};
+    final entetes = {
+      'Content-Type': 'application/json',
+      // Évite la page d'avertissement de ngrok (gratuit) sur les requêtes API.
+      'ngrok-skip-browser-warning': 'true',
+    };
     if (avecToken) {
       final token = await StockageLocal.lireTokenAcces();
       if (token != null) entetes['Authorization'] = 'Bearer $token';
@@ -25,7 +29,10 @@ class ClientApi {
     try {
       final rep = await http.post(
         Uri.parse(Constantes.urlRafraichirToken),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
         body: jsonEncode({'refresh': refresh}),
       ).timeout(Constantes.dureeRequete);
       if (rep.statusCode == 200) {

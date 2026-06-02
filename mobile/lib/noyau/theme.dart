@@ -107,6 +107,62 @@ abstract class ThemeNesjAcademy {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       ),
+
+      // Transition entre écrans (Navigator) : « fondu + zoom » inspiré du template.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android:  _TransitionFonduEchelle(),
+          TargetPlatform.iOS:      _TransitionFonduEchelle(),
+          TargetPlatform.fuchsia:  _TransitionFonduEchelle(),
+          TargetPlatform.linux:    _TransitionFonduEchelle(),
+          TargetPlatform.macOS:    _TransitionFonduEchelle(),
+          TargetPlatform.windows:  _TransitionFonduEchelle(),
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _TransitionFonduEchelle — l'écran sortant se replie (zoom arrière + fondu),
+// puis l'écran entrant apparaît (zoom avant + fondu). Inspiré du « fade through »
+// du template : le courant disparaît d'abord, le suivant apparaît ensuite.
+// ─────────────────────────────────────────────────────────────────────────────
+class _TransitionFonduEchelle extends PageTransitionsBuilder {
+  const _TransitionFonduEchelle();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,          // 0→1 quand cette page entre
+    Animation<double> secondaryAnimation, // 0→1 quand cette page est recouverte
+    Widget child,
+  ) {
+    // Entrée : fondu + zoom (0.94 → 1) sur la 2e moitié de la transition.
+    final entreeFondu = CurvedAnimation(
+      parent: animation, curve: const Interval(0.30, 1.0, curve: Curves.easeOut));
+    final entreeEchelle = Tween<double>(begin: 0.94, end: 1.0).animate(
+      CurvedAnimation(parent: animation,
+          curve: const Interval(0.30, 1.0, curve: Curves.easeOutCubic)));
+
+    // Sortie (recouvrement) : fondu + léger repli (1 → 0.96) sur la 1re moitié.
+    final sortieFondu = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: secondaryAnimation,
+          curve: const Interval(0.0, 0.40, curve: Curves.easeIn)));
+    final sortieEchelle = Tween<double>(begin: 1.0, end: 0.96).animate(
+      CurvedAnimation(parent: secondaryAnimation,
+          curve: const Interval(0.0, 0.40, curve: Curves.easeIn)));
+
+    return FadeTransition(
+      opacity: entreeFondu,
+      child: ScaleTransition(
+        scale: entreeEchelle,
+        child: FadeTransition(
+          opacity: sortieFondu,
+          child: ScaleTransition(scale: sortieEchelle, child: child),
+        ),
+      ),
     );
   }
 }

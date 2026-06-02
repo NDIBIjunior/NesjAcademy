@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../composants/squelette.dart';
 import '../../donnees/api/client_api.dart';
 import '../../donnees/local/stockage_local.dart';
 import '../../noyau/constantes.dart';
@@ -100,7 +101,7 @@ class _EcranProfilState extends State<EcranProfil>
   void initState() {
     super.initState();
     animationController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 900),
       vsync: this,
     );
     topBarAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -300,8 +301,7 @@ class _EcranProfilState extends State<EcranProfil>
           future: _futureData,
           builder: (_, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: CircularProgressIndicator(color: _T.nearlyDarkBlue));
+              return const SquelettePage();
             }
             if (snap.hasError) {
               return _buildErreur(
@@ -357,11 +357,13 @@ class _EcranProfilState extends State<EcranProfil>
                         children: [
                           Expanded(
                             child: Text('Mon Profil',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontFamily:    _T.font,
                                 fontWeight:    FontWeight.w700,
-                                fontSize:      22 + 6 - 6 * topBarOpacity,
-                                letterSpacing: 1.2,
+                                fontSize:      20 + 3 - 3 * topBarOpacity,
+                                letterSpacing: 0.3,
                                 color:         _T.darkerText,
                               )),
                           ),

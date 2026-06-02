@@ -1,8 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../donnees/api/client_api.dart';
 import '../../fournisseurs/fournisseur_auth.dart';
+import '../../noyau/constantes.dart';
 import '../../noyau/routes.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,6 +142,13 @@ class _EcranInscriptionState extends State<EcranInscription>
   bool      _mdpConfVisible        = false;
   DateTime? _dateExamen;
 
+  // Niveaux disponibles, chargés depuis la base de données (avec un fallback
+  // local au cas où le réseau échoue, pour ne jamais bloquer l'inscription).
+  List<({String value, String label})> _niveaux = const [
+    (value: 'Tle_C', label: 'Terminale C (BAC)'),
+    (value: '3eme',  label: '3ème (BEPC)'),
+  ];
+
   // ── État du parcours multi-étapes ───────────────────────────────────────────
   int  _etape     = 0;
   bool _sensAvant = true; // direction de la transition (avant / arrière)
@@ -157,6 +168,32 @@ class _EcranInscriptionState extends State<EcranInscription>
       CurvedAnimation(parent: _tapCtrl, curve: Curves.easeOut),
     );
     _tapCtrl.value = 1.0;
+    _chargerNiveaux();
+  }
+
+  // Charge la liste des classes réellement présentes en base (endpoint public).
+  // En cas d'échec, on garde le fallback local → l'inscription reste possible.
+  Future<void> _chargerNiveaux() async {
+    try {
+      final rep = await ClientApi.get(Constantes.urlNiveaux);
+      if (rep.statusCode != 200) return;
+      final liste = (jsonDecode(utf8.decode(rep.bodyBytes)) as List)
+          .map((e) => (
+                value: (e as Map)['value'] as String,
+                label: e['label'] as String,
+              ))
+          .toList();
+      if (liste.isEmpty || !mounted) return;
+      setState(() {
+        _niveaux = liste;
+        // Si le niveau présélectionné n'existe pas en base, prendre le premier.
+        if (!_niveaux.any((n) => n.value == _niveauChoisi)) {
+          _niveauChoisi = _niveaux.first.value;
+        }
+      });
+    } catch (_) {
+      // réseau KO → on conserve le fallback
+    }
   }
 
   @override
@@ -606,10 +643,9 @@ class _EcranInscriptionState extends State<EcranInscription>
         _SelectFocus<String>(
           label:   'Niveau',
           valeur:  _niveauChoisi,
-          items: const [
-            DropdownMenuItem(value: 'Tle_C', child: Text('Terminale C (BAC)')),
-            DropdownMenuItem(value: '3eme',  child: Text('3ème (BEPC)')),
-          ],
+          items: _niveaux
+              .map((n) => DropdownMenuItem(value: n.value, child: Text(n.label)))
+              .toList(),
           onChanged: (v) { if (v != null) setState(() => _niveauChoisi = v); },
         ),
         _SelectFocus<String>(

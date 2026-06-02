@@ -6,11 +6,83 @@ appel IA. Plus le contexte est riche, plus les réponses sont pertinentes.
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+# Noms français pour le programme d'étude.
+_JOURS_FR = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+_MOIS_FR  = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+             'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
+
+
+def _programme_etude_texte(plan, jours: int = 7) -> str:
+    """
+    Construit le texte du programme d'étude de l'élève sur les `jours` prochains
+    jours, groupé par date, avec matière, chapitre, type de séance, durée,
+    horaire (calculé dans la tranche) et état (fait / à faire).
+
+    Retourne '' s'il n'y a aucune séance.
+    """
+    from applications.planning.models import SessionEtude
+
+    labels_type = {
+        SessionEtude.ANTICIPATION:       "Anticipation",
+        SessionEtude.DECOUVERTE:         "Découverte",
+        SessionEtude.REVISION_IMMEDIATE: "Révision immédiate",
+        SessionEtude.REVISION_J1:        "Révision J+1",
+        SessionEtude.REVISION_J3:        "Révision J+3",
+        SessionEtude.REVISION_J7:        "Révision J+7",
+        SessionEtude.REVISION_J14:       "Révision J+14",
+    }
+
+    aujourd_hui = date.today()
+    fin         = aujourd_hui + timedelta(days=jours)
+
+    sessions = list(
+        SessionEtude.objects
+        .filter(plan=plan, date_prevue__gte=aujourd_hui, date_prevue__lte=fin)
+        .select_related('chapitre__matiere', 'tranche_horaire')
+        .order_by('date_prevue', 'tranche_horaire__heure_debut', 'id')[:40]
+    )
+    if not sessions:
+        return ''
+
+    # Horaires séquentiels à l'intérieur de chaque (jour, tranche) — même logique
+    # que la vue planning : on cumule les durées depuis le début de la tranche.
+    curseurs: dict = {}
+    par_jour: dict = {}
+    for s in sessions:
+        heure = ''
+        if s.tranche_horaire_id and s.tranche_horaire:
+            cle = (s.date_prevue, s.tranche_horaire_id)
+            if cle not in curseurs:
+                curseurs[cle] = datetime.combine(s.date_prevue, s.tranche_horaire.heure_debut)
+            debut = curseurs[cle]
+            fin_s = debut + timedelta(minutes=s.duree_minutes)
+            heure = f"{debut.strftime('%H:%M')}–{fin_s.strftime('%H:%M')} "
+            curseurs[cle] = fin_s
+        par_jour.setdefault(s.date_prevue, []).append((s, heure))
+
+    lignes = []
+    for d in sorted(par_jour):
+        if d == aujourd_hui:
+            label_jour = "Aujourd'hui"
+        elif d == aujourd_hui + timedelta(days=1):
+            label_jour = "Demain"
+        else:
+            label_jour = _JOURS_FR[d.weekday()].capitalize()
+        lignes.append(f"{label_jour} ({d.day} {_MOIS_FR[d.month - 1]}) :")
+        for s, heure in par_jour[d]:
+            typ   = labels_type.get(s.type_session, s.type_session)
+            etat  = " — ✅ fait" if s.completee else ""
+            lignes.append(
+                f"  - {heure}{s.chapitre.matiere.nom} — {s.chapitre.titre} "
+                f"({typ}, {s.duree_minutes} min){etat}"
+            )
+    return "\n".join(lignes)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -23,9 +95,7 @@ def construire_contexte_tuteur(eleve) -> str:
     Injecte : niveau, filière, matières difficiles, chapitres de la semaine,
     jours avant l'examen, taux d'avancement du planning.
     """
-    from applications.planning.models import (
-        ObjectifMatiere, SessionEtude,
-    )
+    from applications.planning.models import ObjectifMatiere
 
     prenom  = eleve.prenom or eleve.telephone
     niveau  = eleve.niveau or ''
@@ -45,30 +115,12 @@ def construire_contexte_tuteur(eleve) -> str:
     if eleve.date_examen:
         jours_examen = max(0, (eleve.date_examen - date.today()).days)
 
-    # Chapitres & avancement du planning
-    chapitres_semaine = []
-    taux_completion   = 0
+    # Programme d'étude (jour par jour) + avancement du planning
+    programme_texte = ''
+    taux_completion = 0
     try:
         plan = eleve.plan_etude
-        aujourd_hui = date.today()
-        sessions_semaine = (
-            SessionEtude.objects
-            .filter(
-                plan=plan,
-                date_prevue__range=(aujourd_hui, aujourd_hui + timedelta(days=7)),
-                completee=False,
-            )
-            .select_related('chapitre__matiere')
-            .order_by('date_prevue')[:15]
-        )
-        vus = set()
-        for s in sessions_semaine:
-            label = f"{s.chapitre.matiere.nom} — {s.chapitre.titre}"
-            if label not in vus:
-                vus.add(label)
-                chapitres_semaine.append(label)
-        chapitres_semaine = chapitres_semaine[:6]
-
+        programme_texte = _programme_etude_texte(plan, jours=7)
         total = plan.sessions.count()
         completees = plan.sessions.filter(completee=True).count()
         taux_completion = round(completees / max(1, total) * 100)
@@ -96,14 +148,20 @@ def construire_contexte_tuteur(eleve) -> str:
     if matieres_faciles:
         lignes.append(f"- Points forts : {', '.join(matieres_faciles)}")
 
-    if chapitres_semaine:
-        lignes += ["", "## Chapitres au programme cette semaine"]
-        for ch in chapitres_semaine:
-            lignes.append(f"- {ch}")
+    if programme_texte:
+        lignes += [
+            "",
+            "## Programme d'étude de l'élève (prochains jours)",
+            programme_texte,
+        ]
 
     lignes += [
         "",
         "## Règles de comportement",
+        "- Tu CONNAIS le programme d'étude ci-dessus : réponds précisément aux questions sur le planning "
+        "(ce qu'il doit réviser aujourd'hui ou demain, ses séances, leurs horaires et durées, ce qui est déjà fait).",
+        "- Si l'élève demande son programme et qu'aucune séance n'est listée, dis-lui que son planning est vide "
+        "ou pas encore généré, sans inventer de séances.",
         "- Réponds en 150 mots maximum sauf si une explication détaillée est demandée, alors donne tout les détails utiles.",
         "- Pour les exercices ou démonstrations, montre les étapes une par une.",
         "- Si l'élève semble décourager, encourage-le avec bienveillance avant de répondre.",

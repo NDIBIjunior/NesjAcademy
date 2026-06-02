@@ -204,11 +204,11 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
     _indexChar       = 0;
     setState(() => _texteEnStream = '');
 
-    // 4 caractères toutes les 18 ms ≈ 220 chars/s — naturel et lisible
-    _streamTimer = Timer.periodic(const Duration(milliseconds: 18), (_) {
+    // 2 caractères toutes les 26 ms ≈ 77 chars/s — plus lent et plus fluide
+    _streamTimer = Timer.periodic(const Duration(milliseconds: 26), (_) {
       if (!mounted) { _streamTimer?.cancel(); return; }
 
-      final fin = (_indexChar + 4).clamp(0, _contenuComplet.length);
+      final fin = (_indexChar + 2).clamp(0, _contenuComplet.length);
       setState(() {
         _indexChar      = fin;
         _texteEnStream  = _contenuComplet.substring(0, fin);

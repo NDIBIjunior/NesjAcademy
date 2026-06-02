@@ -13,6 +13,7 @@ import '../ia/ecran_quiz_seance.dart';
 import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
+import '../../noyau/service_concentration.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Palette Fitness — cohérente avec tout le reste de l'application
@@ -144,6 +145,8 @@ class _EcranSeanceState extends State<EcranSeance> {
   @override
   void dispose() {
     _timer?.cancel();
+    // Toujours rétablir les notifications en quittant la séance (fin, retour…).
+    if (_concentrationActive) ServiceConcentration.desactiver();
     _audioPlayer?.dispose();
     super.dispose();
   }
@@ -186,11 +189,33 @@ class _EcranSeanceState extends State<EcranSeance> {
   }
 
   Future<void> _activerConcentration() async {
-    final status = await Permission.notification.request();
-    if (mounted) {
-      setState(() => _concentrationActive = status.isGranted);
-      _demarrerChrono();
+    // 1. Demander l'accès « Ne pas déranger » (ouvre les réglages système si
+    //    pas encore accordé — c'est CETTE permission qui permet de couper les
+    //    notifications, pas Permission.notification).
+    var statut = await Permission.accessNotificationPolicy.status;
+    if (!statut.isGranted) {
+      statut = await Permission.accessNotificationPolicy.request();
     }
+
+    // 2. Basculer réellement le téléphone en silence total (code natif).
+    bool actif = false;
+    if (statut.isGranted) {
+      actif = await ServiceConcentration.activer();
+    }
+
+    if (!mounted) return;
+    setState(() => _concentrationActive = actif);
+
+    if (!actif) {
+      ToastApp.afficher(
+        context,
+        message: 'Autorise l\'accès « Ne pas déranger » pour couper les '
+            'notifications pendant ta séance.',
+        type: ToastType.info,
+        duree: const Duration(seconds: 5),
+      );
+    }
+    _demarrerChrono();
   }
 
   void _demarrerChrono() {

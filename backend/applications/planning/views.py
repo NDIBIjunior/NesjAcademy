@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -36,6 +36,38 @@ _NOM_JOUR_FR = {
     0: 'Lundi', 1: 'Mardi', 2: 'Mercredi', 3: 'Jeudi',
     4: 'Vendredi', 5: 'Samedi', 6: 'Dimanche',
 }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vue publique : niveaux scolaires réellement disponibles (avec des matières)
+# Utilisée à l'INSCRIPTION (avant connexion) pour la liste des classes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueNiveauxDisponibles(APIView):
+    """
+    GET /api/planning/niveaux/  (public)
+
+    Retourne uniquement les niveaux qui ont au moins une matière en base,
+    dans l'ordre officiel, avec leur libellé d'affichage. Optionnel :
+    ?systeme=FR pour filtrer par système scolaire.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        libelles = dict(Matiere.NIVEAUX)
+        qs = Matiere.objects.all()
+        systeme = request.query_params.get('systeme')
+        if systeme:
+            qs = qs.filter(systeme=systeme)
+
+        presents = set(qs.values_list('niveau', flat=True).distinct())
+        # On respecte l'ordre déclaré dans Matiere.NIVEAUX
+        donnees = [
+            {'value': code, 'label': libelles.get(code, code)}
+            for code, _ in Matiere.NIVEAUX
+            if code in presents
+        ]
+        return Response(donnees)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

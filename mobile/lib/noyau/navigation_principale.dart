@@ -56,7 +56,8 @@ class _NavigationPrincipaleState extends State<NavigationPrincipale>
   void initState() {
     super.initState();
     _animController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration:        const Duration(milliseconds: 640), // apparition (forward)
+      reverseDuration: const Duration(milliseconds: 380), // repli (reverse)
       vsync: this,
     );
     _corps = _pages[0];
@@ -102,15 +103,22 @@ class _NavigationPrincipaleState extends State<NavigationPrincipale>
         backgroundColor: Colors.transparent,
         body: Stack(
           children: [
-            // Contenu avec fade entre onglets
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              transitionBuilder: (child, anim) =>
-                  FadeTransition(opacity: anim, child: child),
-              child: KeyedSubtree(
-                key: ValueKey(_ongletActif),
-                child: _corps,
-              ),
+            // Contenu : repli (reverse) puis apparition (forward) — comme le
+            // template. _animController pilote réellement le zoom + le fondu.
+            AnimatedBuilder(
+              animation: _animController,
+              builder: (_, child) {
+                final v = _animController.value.clamp(0.0, 1.0);
+                return Opacity(
+                  opacity: v,
+                  child: Transform.scale(
+                    scale:     0.94 + 0.06 * v, // 0.94 (replié) → 1.0 (plein)
+                    alignment: Alignment.center,
+                    child:     child,
+                  ),
+                );
+              },
+              child: _corps,
             ),
             // Barre de navigation en bas
             _BottomNav(

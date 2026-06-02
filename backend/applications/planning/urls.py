@@ -8,6 +8,7 @@ from .views import (
     VueEmploiDuTemps,
     VueGenererPlan,
     VueMatieres,
+    VueNiveauxDisponibles,
     VueObjectifsEleve,
     VuePlanningAujourdhui,
     VuePlanningHebdomadaire,
@@ -21,6 +22,9 @@ from .views import (
 )
 
 urlpatterns = [
+    # Niveaux scolaires disponibles (public — utilisé à l'inscription)
+    path("niveaux/",          VueNiveauxDisponibles.as_view(), name="planning-niveaux"),
+
     # Liste des matières (pour la sélection du créneau principal)
     path("matieres/",         VueMatieres.as_view(),         name="planning-matieres"),
 

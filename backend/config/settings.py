@@ -32,7 +32,16 @@ SECRET_KEY = env('SECRET_KEY', default='django-insecure-&1aw_jvnda(dlcydm*1alii4
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = []
+# Démo : autorise le tunnel ngrok/cloudflare. À restreindre en production.
+ALLOWED_HOSTS = ['*']
+
+# Origines de confiance pour le CSRF (formulaire admin via HTTPS/tunnel).
+# N'affecte pas l'API mobile (JWT, sans CSRF). À restreindre en production.
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.ngrok-free.dev',
+    'https://*.ngrok-free.app',
+    'https://semiround-truncated-edmond.ngrok-free.dev',
+]
 
 
 # Application definition
@@ -161,8 +170,11 @@ REST_FRAMEWORK = {
 
 # ── CORS (Cross-Origin Resource Sharing) ──────────────────────────────────────
 # En développement on autorise toutes les origines (Flutter web + émulateur).
-# En production, remplacer par CORS_ALLOWED_ORIGINS avec l'URL Railway.
+# En production, remplacer par CORS_ALLOWED_ORIGINS avec l'URL de prod.
 CORS_ALLOW_ALL_ORIGINS = True
+# Autorise tous les en-têtes de requête (dont 'ngrok-skip-browser-warning'),
+# sinon le preflight CORS du navigateur (Flutter web) rejette la requête.
+CORS_ALLOW_HEADERS = ['*']
 
 # ── Simple JWT ─────────────────────────────────────────────────────────────────
 from datetime import timedelta

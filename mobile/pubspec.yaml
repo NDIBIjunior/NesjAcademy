@@ -77,6 +77,19 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+  # Génère les icônes de lancement (logo) pour Android et iOS.
+  flutter_launcher_icons: ^0.14.1
+
+# ── Configuration de l'icône de l'application ────────────────────────────────
+# Place ton logo carré (PNG, idéalement 1024x1024) dans assets/icone/logo.png
+# puis exécute :  dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icone/logo.png"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 

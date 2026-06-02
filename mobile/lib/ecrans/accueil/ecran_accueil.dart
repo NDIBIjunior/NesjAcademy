@@ -111,7 +111,7 @@ class _EcranAccueilState extends State<EcranAccueil>
     super.initState();
 
     animationController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 900),
       vsync: this,
     );
 
@@ -516,11 +516,13 @@ class _EcranAccueilState extends State<EcranAccueil>
                                 padding: const EdgeInsets.all(8.0),
                                 child: Text(
                                   'Mon Journal',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontFamily:    _T.font,
                                     fontWeight:    FontWeight.w700,
-                                    fontSize:      22 + 6 - 6 * topBarOpacity,
-                                    letterSpacing: 1.2,
+                                    fontSize:      20 + 3 - 3 * topBarOpacity,
+                                    letterSpacing: 0.3,
                                     color:         _T.darkerText,
                                   ),
                                 ),
@@ -2250,14 +2252,14 @@ class _VueTubeProgressionState extends State<_VueTubeProgression>
           _wave1.add(Offset(
             i.toDouble(),
             math.sin((_waveCtrl!.value * 360 - i) % 360 * math.pi / 180) * 4
-                + ((100 - widget.pourcentage) * 160 / 100),
+                + ((100 - widget.pourcentage) * 168 / 100 - 4),
           ));
         }
         for (int i = -2; i <= 122; i++) {
           _wave2.add(Offset(
             i.toDouble() + 60,
             math.sin((_waveCtrl!.value * 360 - i) % 360 * math.pi / 180) * 4
-                + ((100 - widget.pourcentage) * 160 / 100),
+                + ((100 - widget.pourcentage) * 168 / 100 - 4),
           ));
         }
       })
@@ -2303,63 +2305,64 @@ class _VueTubeProgressionState extends State<_VueTubeProgression>
                             parent: _bobCtrl!, curve: Curves.easeInOut),
                         builder: (_, __) => Stack(
                           children: [
-                            // Vague 1 (semi-transparent)
-                            ClipPath(
-                              clipper: _WaveClipper(_waveCtrl?.value ?? 0, _wave1),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(80),
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      _T.nearlyDarkBlue.withValues(alpha: 0.2),
-                                      _T.nearlyDarkBlue.withValues(alpha: 0.5),
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end:   Alignment.bottomRight,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            // Vague 2 (pleine)
-                            ClipPath(
-                              clipper: _WaveClipper(_waveCtrl?.value ?? 0, _wave2),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(80),
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      _T.nearlyDarkBlue.withValues(alpha: 0.4),
-                                      _T.nearlyDarkBlue,
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end:   Alignment.bottomRight,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            // Pourcentage au centre
-                            Padding(
-                              padding: const EdgeInsets.only(top: 48),
-                              child: Center(
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                            // Tube : fond visible + liquide, clippé en forme de tube
+                            Positioned.fill(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(80),
+                                child: Stack(
+                                  fit: StackFit.expand,
                                   children: [
-                                    Text(
-                                      widget.pourcentage.round().toString(),
-                                      style: TextStyle(
-                                        fontFamily: _T.font, fontWeight: FontWeight.w500,
-                                        fontSize: 24, color: _T.white,
-                                      )),
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 3),
-                                      child: Text('%',
-                                        style: TextStyle(
-                                          fontFamily: _T.font, fontWeight: FontWeight.w500,
-                                          fontSize: 14, color: _T.white,
-                                        )),
+                                    // Fond du tube (partie vide, bien visible)
+                                    Container(
+                                      color: _T.nearlyDarkBlue.withValues(alpha: 0.08),
+                                    ),
+                                    // Vague 1 (semi-transparente)
+                                    ClipPath(
+                                      clipper: _WaveClipper(_waveCtrl?.value ?? 0, _wave1),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              _T.nearlyDarkBlue.withValues(alpha: 0.2),
+                                              _T.nearlyDarkBlue.withValues(alpha: 0.5),
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end:   Alignment.bottomRight,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    // Vague 2 (pleine)
+                                    ClipPath(
+                                      clipper: _WaveClipper(_waveCtrl?.value ?? 0, _wave2),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              _T.nearlyDarkBlue.withValues(alpha: 0.4),
+                                              _T.nearlyDarkBlue,
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end:   Alignment.bottomRight,
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ],
+                                ),
+                              ),
+                            ),
+                            // Contour du tube
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(80),
+                                    border: Border.all(
+                                      color: _T.nearlyDarkBlue.withValues(alpha: 0.18),
+                                      width: 2,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),

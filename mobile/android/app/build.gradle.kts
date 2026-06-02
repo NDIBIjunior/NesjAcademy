@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "com.nesjacademy.nesjacademy"
-    compileSdk = flutter.compileSdkVersion
+    // Forcé à 36 : exigé par shared_preferences_android, et déjà installé en
+    // local (le SDK 34 était incomplet et dl.google.com est injoignable).
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
