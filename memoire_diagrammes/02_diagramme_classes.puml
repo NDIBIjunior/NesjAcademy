@@ -1,0 +1,163 @@
+@startuml 02_diagramme_classes
+!theme plain
+skinparam backgroundColor white
+skinparam classAttributeIconSize 0
+hide circle
+hide empty members
+
+class Utilisateur {
+  + id : int
+  + telephone : string
+  + role : enum {eleve, parent, admin}
+  + niveau : string
+  + date_examen : date
+  + sexe, age, ville, etablissement
+  + firebase_token : string
+}
+
+class LienParentEleve {
+  + id : int
+}
+
+class Matiere {
+  + id : int
+  + nom : string
+  + coefficient_minesec : int
+  + categorie : enum {hcc_pur, hcc_mixte, lecture, sport}
+  + necessite_diagnostic : bool
+  + necessite_exercices : bool
+  + duree_lecture_minutes : int
+  + duree_exercices_minutes : int
+}
+
+class Chapitre {
+  + id : int
+  + ordre : int
+  + titre : string
+  + duree_estimee_heures : float
+}
+
+class ProgressionChapitre {
+  + id : int
+  + statut : enum {pas_vu, en_cours, maitrise}
+  + statut_classe : enum {non_aborde, en_cours, termine}
+}
+
+class PositionProgramme {
+  + id : int
+  + chapitre_actuel : FK(Chapitre)
+}
+
+class ObjectifMatiere {
+  + id : int
+  + note_cible : float
+  + niveau_difficulte : int "1..3"
+  + inclus_dans_planning : bool
+}
+
+class DisponibiliteEleve {
+  + id : int
+  + jour : string
+  + heures_par_jour : float
+  + creneau_prefere : string
+  + preference_etude : enum {matin, soir}
+}
+
+class TrancheHoraire {
+  + id : int
+  + jour : string
+  + heure_debut : time
+  + heure_fin : time
+}
+
+class CoursHebdomadaire {
+  + id : int
+  + jour : string
+}
+
+class PlanEtude {
+  + id : int
+  + date_generation : datetime
+  + actif : bool
+}
+
+class SessionEtude {
+  + id : int
+  + type_session : enum {anticipation, decouverte,\nrevision_j1, revision_j3,\nrevision_j7, revision_j14,\nconsolidation}
+  + date : date
+  + heure_debut, heure_fin
+  + est_pilier : bool
+  + est_optionnelle : bool
+  + est_abandonnee : bool
+  + decalage_minutes : int
+  + dette_memorielle : float
+}
+
+class QuestionDiagnostic {
+  + id : int
+  + enonce : string
+  + propositions : json
+  + reponse_correcte : string
+}
+
+class ResultatDiagnostic {
+  + id : int
+  + note : float "/20"
+  + date_passage : datetime
+}
+
+class EtatQuiz {
+  + id : int
+  + etat_courant : json
+}
+
+class ConversationIA {
+  + id : int
+  + type_conversation : enum {tuteur, seance, quiz, conseil}
+  + date_creation : datetime
+}
+
+class MessageIA {
+  + id : int
+  + role : enum {utilisateur, assistant}
+  + contenu : text
+  + date_envoi : datetime
+}
+
+' -------- Relations --------
+Utilisateur "1" -- "0..1" PlanEtude : possède >
+PlanEtude "1" *-- "0..*" SessionEtude : contient >
+SessionEtude "0..*" --> "1" Matiere
+SessionEtude "0..*" --> "0..1" Chapitre
+SessionEtude "0..*" --> "0..1" TrancheHoraire
+
+Utilisateur "1" -- "0..*" LienParentEleve
+LienParentEleve "0..*" -- "1" Utilisateur : eleve_lie >
+
+Matiere "1" *-- "0..*" Chapitre : possède >
+Utilisateur "1" -- "0..*" ProgressionChapitre
+Chapitre "1" -- "0..*" ProgressionChapitre
+
+Utilisateur "1" -- "0..*" PositionProgramme
+Matiere "1" -- "0..*" PositionProgramme
+PositionProgramme "0..*" --> "1" Chapitre : ancre sur >
+
+Utilisateur "1" -- "0..*" ObjectifMatiere
+Matiere "1" -- "0..*" ObjectifMatiere
+
+Utilisateur "1" -- "0..*" DisponibiliteEleve
+Utilisateur "1" -- "0..*" TrancheHoraire
+Matiere "1" -- "0..*" TrancheHoraire : matiere_principale >
+
+Utilisateur "1" -- "0..*" CoursHebdomadaire
+Matiere "1" -- "0..*" CoursHebdomadaire
+
+Matiere "1" -- "0..*" QuestionDiagnostic
+Utilisateur "1" -- "0..*" ResultatDiagnostic
+Matiere "1" -- "0..*" ResultatDiagnostic
+Utilisateur "1" -- "0..1" EtatQuiz
+
+Utilisateur "1" -- "0..*" ConversationIA
+ConversationIA "1" *-- "0..*" MessageIA : contient >
+
+@enduml

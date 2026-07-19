@@ -11,7 +11,8 @@
       "Bash(python *)",
       "PowerShell(C:\\\\projet\\\\NesjAcademy\\\\backend\\\\venv\\\\Scripts\\\\python.exe C:\\\\projet\\\\NesjAcademy\\\\backend\\\\manage.py makemigrations planning --name tranche_horaire 2>&1)",
       "Bash(venvScriptspython.exe -c ' *)",
-      "Bash(venv/Scripts/python.exe -c ' *)"
+      "Bash(venv/Scripts/python.exe -c ' *)",
+      "Bash(grep -nA30 \"assets:\\\\|flutter:\")"
     ]
   }
 }

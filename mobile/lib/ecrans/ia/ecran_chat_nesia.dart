@@ -6,6 +6,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import '../../composants/marque.dart';
 import '../../donnees/api/service_ia.dart';
 import '../../donnees/modeles/message_ia.dart';
 
@@ -305,18 +306,17 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                   const SizedBox(width: 10),
                   Container(
                     width: 44, height: 44,
+                    padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       color:  Colors.white.withValues(alpha: 0.18),
                       shape:  BoxShape.circle,
                       border: Border.all(
                           color: Colors.white.withValues(alpha: 0.5), width: 1.5),
                     ),
-                    child: const Center(
-                      child: Text('N',
-                        style: TextStyle(
-                          fontFamily:  _T.font, color: Colors.white,
-                          fontSize:    22, fontWeight: FontWeight.w800,
-                        )),
+                    child: const Image(
+                      image: AssetImage(kAvatarIA),
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -324,7 +324,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('NESIA',
+                        const Text('NESTOR',
                           style: TextStyle(
                             fontFamily: _T.font, color: Colors.white,
                             fontSize: 18, fontWeight: FontWeight.w800,
@@ -416,7 +416,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                 style: const TextStyle(
                     fontFamily: _T.font, fontSize: 14, color: _T.darkText),
                 decoration: InputDecoration(
-                  hintText:  'Pose ta question à NESIA…',
+                  hintText:  'Pose ta question à NESTOR…',
                   hintStyle: TextStyle(
                     fontFamily: _T.font, fontSize: 14,
                     color: _T.lightText.withValues(alpha: 0.7)),
@@ -453,6 +453,7 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                 Transform.scale(scale: scale, child: child),
             child: Container(
               width: 72, height: 72,
+              padding: const EdgeInsets.all(9),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [_T.nearlyDarkBlue, _T.purple],
@@ -463,15 +464,15 @@ class _EcranChatNesiaState extends State<EcranChatNesia>
                   color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
                   blurRadius: 20, offset: const Offset(0, 8))],
               ),
-              child: const Center(
-                child: Text('N',
-                  style: TextStyle(
-                    fontFamily: _T.font, color: Colors.white,
-                    fontSize: 32, fontWeight: FontWeight.w800))),
+              child: const Image(
+                image: AssetImage(kAvatarIA),
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+              ),
             ),
           ),
           const SizedBox(height: 22),
-          Text('NESIA se prépare…',
+          Text('NESTOR se prépare…',
             style: TextStyle(
               fontFamily: _T.font, fontSize: 15,
               fontWeight: FontWeight.w500, color: _T.lightText)),
@@ -629,6 +630,7 @@ class _BulleBase extends StatelessWidget {
             Container(
               width: 30, height: 30,
               margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.all(3),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   colors: [_T.nearlyDarkBlue, _T.purple],
@@ -636,11 +638,11 @@ class _BulleBase extends StatelessWidget {
                 ),
                 shape: BoxShape.circle,
               ),
-              child: const Center(
-                child: Text('N',
-                  style: TextStyle(
-                    fontFamily: _T.font, color: Colors.white,
-                    fontSize: 14, fontWeight: FontWeight.w800))),
+              child: const Image(
+                image: AssetImage(kAvatarIA),
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+              ),
             ),
           ],
 
@@ -782,6 +784,7 @@ class _BulleTypingState extends State<_BulleTyping>
           Container(
             width: 30, height: 30,
             margin: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.all(3),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [_T.nearlyDarkBlue, _T.purple],
@@ -789,11 +792,11 @@ class _BulleTypingState extends State<_BulleTyping>
               ),
               shape: BoxShape.circle,
             ),
-            child: const Center(
-              child: Text('N',
-                style: TextStyle(
-                  fontFamily: _T.font, color: Colors.white,
-                  fontSize: 14, fontWeight: FontWeight.w800))),
+            child: const Image(
+              image: AssetImage(kAvatarIA),
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+            ),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),

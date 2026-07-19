@@ -1,0 +1,47 @@
+@startuml 04_activite_algorithme
+!theme plain
+skinparam backgroundColor white
+skinparam activity {
+  BackgroundColor #EAF1FB
+  BorderColor #2E5C8A
+  DiamondBackgroundColor #FDEFD8
+  DiamondBorderColor #B8860B
+}
+
+start
+
+if (Prérequis réunis ?\n(date d'examen future,\nau moins une tranche horaire,\nemploi du temps du lycée)) then (non)
+  :Retourner une erreur\nexplicite en français;
+  stop
+else (oui)
+endif
+
+:Étape 1 — Calculer le poids de\nchaque matière\n(poids = difficulté × coefficient MINESEC);
+
+:Étape 1b — Assigner automatiquement\nune matière principale à chaque\ntranche horaire (matières lourdes\nvers les meilleurs créneaux);
+
+:Étape 2 — Répartir le volume horaire\ndisponible proportionnellement\naux poids;
+
+:Étape 3 — Construire la file des\nséances de découverte,\nentrelacée en tourniquet\n(round-robin) entre matières;
+
+partition "Étape 4 — Placement dans le calendrier" {
+  repeat :Prendre le jour suivant\njusqu'à la date d'examen;
+    repeat :Prendre la tranche horaire\nsuivante du jour;
+      if (Des révisions espacées sont-elles\ndues aujourd'hui ? (J+1 / J+3 / J+7 / J+14)) then (oui)
+        :Placer les révisions dues\nen priorité 1;
+      endif
+      if (Reste-t-il du temps\ndans la tranche ?) then (oui)
+        :Placer des séances de découverte\ntirées de la file entrelacée\n(priorité 2, boussole lycée);
+        :Écourter la dernière séance pour\nutiliser exactement les minutes\nrestantes de la tranche;
+      endif
+    repeat while (Autre tranche ce jour ?) is (oui)
+    ->non;
+  repeat while (Jour < date d'examen ?) is (oui)
+  -> non (examen atteint);
+}
+
+:Étape 5 — Créer le PlanEtude et\nl'ensemble des SessionEtude\nen base de données;
+
+stop
+
+@enduml

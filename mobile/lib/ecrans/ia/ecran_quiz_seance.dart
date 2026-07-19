@@ -45,7 +45,7 @@ abstract class _T {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EcranQuizSeance — QCM 3 questions généré par NESIA après une séance.
+// EcranQuizSeance — QCM 3 questions généré par NESTOR après une séance.
 // Flow : chargement → question (feedback immédiat) → score final.
 // LOGIQUE 100 % INCHANGÉE.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ class _EcranQuizSeanceState extends State<EcranQuizSeance>
       final quizData = corps['quiz'] as Map<String, dynamic>;
 
       if (quizData.containsKey('erreur')) {
-        throw Exception('NESIA n\'a pas pu générer le quiz. Réessaie.');
+        throw Exception('NESTOR n\'a pas pu générer le quiz. Réessaie.');
       }
 
       final questions = (quizData['questions'] as List)
@@ -121,7 +121,7 @@ class _EcranQuizSeanceState extends State<EcranQuizSeance>
       final msg = e.toString();
       setState(() {
         _erreur = msg.contains('TimeoutException') || msg.contains('Future not completed')
-            ? 'NESIA met trop de temps à répondre. Vérifie ta connexion et réessaie.'
+            ? 'NESTOR met trop de temps à répondre. Vérifie ta connexion et réessaie.'
             : msg.replaceFirst('Exception: ', '');
         _etat = _EtatQuiz.erreur;
       });
@@ -248,7 +248,7 @@ class _EcranQuizSeanceState extends State<EcranQuizSeance>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Quiz NESIA',
+                      Text('Quiz NESTOR',
                         style: _T.ts(size: 17, weight: FontWeight.w800,
                             color: Colors.white, spacing: 0.3)),
                       const SizedBox(height: 2),
@@ -303,7 +303,7 @@ class _EcranQuizSeanceState extends State<EcranQuizSeance>
             ),
           ),
           const SizedBox(height: 24),
-          Text('NESIA prépare tes questions…',
+          Text('NESTOR prépare tes questions…',
             style: _T.ts(size: 15, weight: FontWeight.w500, color: _T.lightText)),
           const SizedBox(height: 6),
           Text(widget.chapitreNom,
@@ -592,7 +592,7 @@ class _EcranQuizSeanceState extends State<EcranQuizSeance>
 
             const SizedBox(height: 4),
 
-            // ── Explication NESIA (après validation) ───────────────────────
+            // ── Explication NESTOR (après validation) ───────────────────────
             if (_validee) ...[
               AnimatedOpacity(
                 opacity: 1.0,

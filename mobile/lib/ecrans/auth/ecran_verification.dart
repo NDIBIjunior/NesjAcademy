@@ -304,7 +304,7 @@ class _EcranVerificationState extends State<EcranVerification>
             borderRadius: BorderRadius.circular(8),
           ),
           child: const Text(
-            'NESJACADEMY',
+            'NESIA',
             style: TextStyle(
               fontFamily:    _T.font,
               fontSize:      11,

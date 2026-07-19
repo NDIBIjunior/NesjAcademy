@@ -9,8 +9,8 @@ abstract class Constantes {
   // 127.0.0.1 pour Chrome (flutter run -d chrome)
   // 10.0.2.2   pour émulateur Android
   // <IP locale> pour un vrai appareil (ex: 192.168.1.10)
-  // Test PC (Chrome / Windows). AVANT de générer l'APK, remettre l'URL ngrok :
-  //   'https://semiround-truncated-edmond.ngrok-free.dev/api'
+  // APK démo (tunnel ngrok). Pour tester sur PC (Chrome), remettre :
+  //   'http://127.0.0.1:8000/api'; https://semiround-truncated-edmond.ngrok-free.dev/api
   static const String _base = 'http://127.0.0.1:8000/api';
 
   // Auth
@@ -33,6 +33,7 @@ abstract class Constantes {
   static const String urlGenererPlanning   = '$_base/planning/generer/';
   static const String urlPlanningJour      = '$_base/planning/aujourd-hui/';
   static const String urlPlanningSemaine   = '$_base/planning/semaine/';
+  static const String urlExporterPlanningPdf = '$_base/planning/exporter-pdf/';
   static const String urlResumePlan        = '$_base/planning/resume/';
   static const String urlSessions          = '$_base/planning/sessions/';
   static const String urlSeancesRetard     = '$_base/planning/retard/';
@@ -58,7 +59,7 @@ abstract class Constantes {
   static const String urlFocusDebut        = '$_base/analytique/focus/debut/';
   static const String urlProgression2      = '$_base/analytique/progression/';
 
-  // IA — NESIA
+  // IA — NESTOR
   static const String urlIaTuteurConversations = '$_base/ia/tuteur/conversations/';
   static const String urlIaQuiz               = '$_base/ia/quiz/';
   static const String urlIaConseil            = '$_base/ia/conseil/';

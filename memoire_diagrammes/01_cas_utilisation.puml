@@ -1,0 +1,82 @@
+@startuml 01_cas_utilisation
+!theme plain
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+skinparam backgroundColor white
+left to right direction
+
+actor "Élève" as Eleve
+actor "Parent" as Parent
+actor "Administrateur" as Admin
+actor "Fournisseur d'IA\n(Gemini / DeepSeek / Claude)" as LLM
+
+rectangle "NESJAcademy" {
+
+  package "Compte et profil" {
+    usecase "S'inscrire et vérifier\nle téléphone (OTP)" as UC1
+    usecase "Se connecter" as UC2
+    usecase "Paramétrer objectifs\net difficulté par matière" as UC3
+    usecase "Saisir disponibilités et\nemploi du temps du lycée" as UC4
+  }
+
+  package "Planning" {
+    usecase "Générer le planning\npersonnalisé" as UC5
+    usecase "Consulter le planning\n(jour / semaine)" as UC6
+    usecase "Gérer une séance" as UC7
+    usecase "Compléter une séance" as UC7a
+    usecase "Reporter une séance" as UC7b
+    usecase "Décaler une séance" as UC7c
+    usecase "Abandonner une séance" as UC7d
+    usecase "Calculer la dette\nmémorielle" as UC8
+  }
+
+  package "Progression" {
+    usecase "Mettre à jour la\nprogression par chapitre" as UC9
+    usecase "Passer un diagnostic\n(QCM)" as UC10
+  }
+
+  package "Tutorat NESIA" {
+    usecase "Dialoguer avec NESIA" as UC11
+    usecase "Construire le contexte\nde l'élève" as UC12
+    usecase "Générer un quiz\nde révision" as UC13
+    usecase "Obtenir un conseil\nsur le planning" as UC14
+  }
+
+  package "Supervision" {
+    usecase "Suivre l'activité\nde l'élève" as UC15
+    usecase "Gérer le référentiel\n(matières, chapitres,\ncoefficients)" as UC16
+    usecase "Superviser les comptes" as UC17
+  }
+}
+
+Eleve --> UC1
+Eleve --> UC2
+Eleve --> UC3
+Eleve --> UC4
+Eleve --> UC5
+Eleve --> UC6
+Eleve --> UC7
+Eleve --> UC9
+Eleve --> UC10
+Eleve --> UC11
+
+UC7 .> UC7a : <<include>>
+UC7 .> UC7b : <<include>>
+UC7 .> UC7c : <<include>>
+UC7 .> UC7d : <<include>>
+UC7b .> UC8 : <<include>>
+
+UC11 .> UC12 : <<include>>
+UC11 .> UC13 : <<extend>>
+UC11 .> UC14 : <<extend>>
+UC12 --> LLM
+UC11 --> LLM
+
+Parent --> UC2
+Parent --> UC15
+
+Admin --> UC2
+Admin --> UC16
+Admin --> UC17
+
+@enduml

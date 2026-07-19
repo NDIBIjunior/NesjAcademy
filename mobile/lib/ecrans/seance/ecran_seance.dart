@@ -543,7 +543,7 @@ class _PanneauConseilsState extends State<_PanneauConseils>
                   const SizedBox(height: 10),
                 ],
 
-                // Demander à NESIA
+                // Demander à NESTOR
                 SizedBox(
                   width: double.infinity, height: 48,
                   child: Material(
@@ -581,7 +581,7 @@ class _PanneauConseilsState extends State<_PanneauConseils>
                                 ),
                               ),
                               const SizedBox(width: 10),
-                              Text('Demander à NESIA',
+                              Text('Demander à NESTOR',
                                 style: _T.ts(size: 14, weight: FontWeight.w600,
                                     color: _T.nearlyDarkBlue)),
                             ],
@@ -1004,7 +1004,7 @@ class _PanneauChronoState extends State<_PanneauChrono>
 
             const Spacer(),
 
-            // ── Bouton NESIA discret ─────────────────────────────────────
+            // ── Bouton NESTOR discret ─────────────────────────────────────
             Center(
               child: Material(
                 color: Colors.white.withValues(alpha: 0.08),
@@ -1033,7 +1033,7 @@ class _PanneauChronoState extends State<_PanneauChrono>
                                 fontSize: 11, fontWeight: FontWeight.w800))),
                         ),
                         const SizedBox(width: 8),
-                        Text('Demander à NESIA',
+                        Text('Demander à NESTOR',
                           style: _T.ts(size: 13, weight: FontWeight.w600,
                               color: Colors.white70)),
                       ],
@@ -1502,7 +1502,7 @@ class _DialogPropositionQuiz extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Avatar NESIA
+            // Avatar NESTOR
             Container(
               width: 64, height: 64,
               decoration: const BoxDecoration(
@@ -1523,7 +1523,7 @@ class _DialogPropositionQuiz extends StatelessWidget {
               textAlign: TextAlign.center),
             const SizedBox(height: 10),
             Text(
-              'NESIA a préparé 3 questions sur ce chapitre\npour consolider tes acquis.',
+              'NESTOR a préparé 3 questions sur ce chapitre\npour consolider tes acquis.',
               textAlign: TextAlign.center,
               style: _T.ts(size: 14, color: _T.lightText, height: 1.5)),
             const SizedBox(height: 14),

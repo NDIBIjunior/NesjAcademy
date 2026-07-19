@@ -6,6 +6,7 @@ from .views import (
     VueDecalerSession,
     VueDisponibilite,
     VueEmploiDuTemps,
+    VueExporterPlanningPDF,
     VueGenererPlan,
     VueMatieres,
     VueNiveauxDisponibles,
@@ -41,6 +42,9 @@ urlpatterns = [
     path("aujourd-hui/",    VuePlanningAujourdhui.as_view(),   name="planning-aujourd-hui"),
     path("semaine/",        VuePlanningHebdomadaire.as_view(), name="planning-semaine"),
     path("resume/",         VueResumePlan.as_view(),           name="planning-resume"),
+
+    # Export du planning au format PDF
+    path("exporter-pdf/",   VueExporterPlanningPDF.as_view(),  name="planning-exporter-pdf"),
 
     # Progression détaillée (écran Progrès)
     path("progression/",  VueProgressionDetaillee.as_view(), name="planning-progression"),

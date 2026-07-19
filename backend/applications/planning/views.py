@@ -787,6 +787,56 @@ class VueResumePlan(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Vue 5 bis : Export du planning au format PDF
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VueExporterPlanningPDF(APIView):
+    """
+    GET /api/planning/exporter-pdf/?date_debut=YYYY-MM-DD
+
+    Génère et retourne le planning de révision de l'élève au format PDF, pour la
+    SEMAINE demandée (7 jours à partir de date_debut). Sans date_debut, la
+    semaine en cours est utilisée. Prêt à être téléchargé, imprimé ou partagé.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.http import HttpResponse
+
+        from .export_pdf import generer_pdf_planning
+
+        eleve = request.user
+        try:
+            eleve.plan_etude
+        except PlanEtude.DoesNotExist:
+            return Response(
+                {"erreur": "Aucun planning trouvé. Lance d'abord POST /api/planning/generer/."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Semaine à exporter (optionnelle) — cohérente avec l'écran planning
+        date_debut = None
+        date_debut_str = request.query_params.get("date_debut")
+        if date_debut_str:
+            try:
+                date_debut = date.fromisoformat(date_debut_str)
+            except ValueError:
+                return Response(
+                    {"erreur": "Format de date invalide. Utilise YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        contenu = generer_pdf_planning(eleve, date_debut=date_debut)
+
+        nom_fichier = f"planning_nesjacademy_{date.today().isoformat()}.pdf"
+        reponse = HttpResponse(contenu, content_type="application/pdf")
+        reponse["Content-Disposition"] = f'attachment; filename="{nom_fichier}"'
+        reponse["Content-Length"] = str(len(contenu))
+        return reponse
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Vue 6 : Progression détaillée (écran Progrès)
 # ─────────────────────────────────────────────────────────────────────────────
 

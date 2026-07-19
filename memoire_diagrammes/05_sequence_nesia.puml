@@ -1,0 +1,40 @@
+@startuml 05_sequence_nesia
+!theme plain
+skinparam backgroundColor white
+skinparam sequenceMessageAlign center
+
+actor "Élève" as Eleve
+participant "Application mobile\n(Flutter)" as App
+participant "API Django\n(vue tuteur NESIA)" as API
+participant "Constructeur\nde contexte" as Contexte
+database "Base de données" as BDD
+participant "Fournisseur LLM\n(Gemini / DeepSeek / Claude)" as LLM
+
+Eleve -> App : Saisit sa question
+activate App
+App -> API : POST /api/ia/tuteur/conversations/<id>/message/\n(JWT, contenu du message)
+activate API
+
+API -> BDD : Charger la conversation\net son historique
+BDD --> API : Conversation + messages précédents
+
+API -> Contexte : Construire le contexte de l'élève
+activate Contexte
+Contexte -> BDD : Lire profil, progression par chapitre,\nplanning en cours, séances récentes
+BDD --> Contexte : Données de l'élève
+Contexte --> API : Contexte structuré (JSON)
+deactivate Contexte
+
+API -> LLM : Envoyer prompt système + contexte\n+ historique + question
+activate LLM
+LLM --> API : Réponse générée (flux de tokens)
+deactivate LLM
+
+API --> App : Réponse en flux (streaming)
+App --> Eleve : Affichage progressif\nde la réponse
+
+API -> BDD : Enregistrer le message de l'élève\net la réponse de NESIA
+deactivate API
+deactivate App
+
+@enduml

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../donnees/api/service_ia.dart';
 import '../donnees/modeles/message_ia.dart';
+import 'marque.dart';
 import 'toast_app.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ class _FeuilleNesiaSeanceState extends State<FeuilleNesiaSeance> {
       final msg = e.toString();
       setState(() {
         _erreurInit = msg.contains('TimeoutException') || msg.contains('Future not completed')
-            ? 'NESIA met trop de temps à répondre. Vérifie ta connexion.'
+            ? 'NESTOR met trop de temps à répondre. Vérifie ta connexion.'
             : msg.replaceFirst('Exception: ', '');
         _initialisation = false;
       });
@@ -202,26 +203,14 @@ class _FeuilleNesiaSeanceState extends State<FeuilleNesiaSeance> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
             child: Row(
               children: [
-                // Avatar NESIA (cercle blanc, N bleu)
-                Container(
-                  width: 40, height: 40,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Center(
-                    child: Text('N', style: TextStyle(
-                      fontFamily: _T.font, color: _T.nearlyDarkBlue,
-                      fontSize: 19, fontWeight: FontWeight.w700,
-                    )),
-                  ),
-                ),
+                // Avatar NESTOR (mascotte)
+                const AvatarNesia(taille: 40),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('NESIA', style: TextStyle(
+                      const Text('NESTOR', style: TextStyle(
                         fontFamily: _T.font, color: Colors.white,
                         fontSize: 15, fontWeight: FontWeight.w700,
                       )),
@@ -288,7 +277,7 @@ class _FeuilleNesiaSeanceState extends State<FeuilleNesiaSeance> {
               child: CircularProgressIndicator(strokeWidth: 2.5, color: _T.nearlyDarkBlue),
             ),
             SizedBox(height: 12),
-            Text('NESIA prépare le contexte…',
+            Text('NESTOR prépare le contexte…',
               style: TextStyle(fontFamily: _T.font, color: _T.subtle, fontSize: 13)),
           ],
         ),
@@ -467,7 +456,7 @@ class _BulleMessage extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Indicateur "NESIA écrit…"
+// Indicateur "NESTOR écrit…"
 // ─────────────────────────────────────────────────────────────────────────────
 class _BulleTyping extends StatefulWidget {
   const _BulleTyping();
@@ -546,16 +535,5 @@ class _BulleTypingState extends State<_BulleTyping>
   }
 }
 
-// ── Avatar NESIA compact (dégradé) ────────────────────────────────────────────
-Widget _avatarNesia() => Container(
-  width: 26, height: 26,
-  decoration: const BoxDecoration(
-    gradient: _T.degradeBleu,
-    shape: BoxShape.circle,
-  ),
-  child: const Center(
-    child: Text('N', style: TextStyle(
-      fontFamily: _T.font, color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700,
-    )),
-  ),
-);
+// ── Avatar NESIA compact (mascotte) ───────────────────────────────────────────
+Widget _avatarNesia() => const AvatarNesia(taille: 26, padding: EdgeInsets.all(2.5));

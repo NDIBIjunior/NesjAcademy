@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../composants/marque.dart';
 import '../../noyau/routes.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EcranIntroInscription — phase d'introduction animée de NESJAcademy.
+// EcranIntroInscription — phase d'introduction animée de NESIA.
 //
 // Présente l'application en 5 vues empilées pilotées par UN SEUL
 // AnimationController (valeur 0 → 1). Chaque vue occupe une tranche de 0.2 :
@@ -138,10 +139,10 @@ class _EcranIntroInscriptionState extends State<EcranIntroInscription>
               debut: 0.4,
               icone: Icons.auto_awesome_rounded,
               accent: const Color(0xFFF1B440),
-              titre: 'NESIA, ton tuteur IA',
+              titre: 'NESTOR, ton tuteur IA',
               description:
                   "Pose tes questions, reçois de l'aide pendant tes séances et "
-                  "teste-toi avec des quiz : NESIA t'accompagne à tout moment.",
+                  "teste-toi avec des quiz : NESTOR t'accompagne à tout moment.",
             ),
             _SlideBienvenue(
               ctrl: _ctrl,
@@ -149,7 +150,7 @@ class _EcranIntroInscriptionState extends State<EcranIntroInscription>
               accent: const Color(0xFFF56E98),
               titre: 'Prêt à réussir ?',
               description:
-                  "Rejoins NESJAcademy et révise plus intelligemment, dès aujourd'hui.",
+                  "Rejoins NESIA et révise plus intelligemment, dès aujourd'hui.",
             ),
             _BarreHaut(ctrl: _ctrl, onRetour: _precedent, onPasser: _passer),
             _BoutonCentral(
@@ -296,10 +297,10 @@ class _SplashView extends StatelessWidget {
         child: Column(
           children: [
             const Spacer(),
-            const _Illustration(icone: Icons.menu_book_rounded, accent: Color(0xFF34D399)),
-            const SizedBox(height: 24),
+            const LogoNesj(taille: 150),
+            const SizedBox(height: 20),
             const Text(
-              'NESJAcademy',
+              'NESIA',
               style: TextStyle(
                 fontFamily:    _T.font,
                 fontSize:      30,

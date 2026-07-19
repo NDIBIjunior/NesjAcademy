@@ -34,7 +34,7 @@ class NESJAcademyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => FournisseurAuth()),
       ],
       child: MaterialApp(
-        title: 'NESJAcademy',
+        title: 'NESIA',
         debugShowCheckedModeBanner: false,
         theme: ThemeNesjAcademy.theme(),
         localizationsDelegates: const [

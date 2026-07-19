@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../composants/marque.dart';
 import '../ecrans/accueil/ecran_accueil.dart';
 import '../ecrans/ia/ecran_chat_nesia.dart';
 import '../ecrans/planning/ecran_planning.dart';
@@ -295,15 +296,12 @@ class _BottomNavState extends State<_BottomNav> with TickerProviderStateMixin {
                               highlightColor:  Colors.transparent,
                               borderRadius:    BorderRadius.circular(38),
                               onTap:           widget.onNesiaTap,
-                              child: const Center(
-                                child: Text(
-                                  'N',
-                                  style: TextStyle(
-                                    color:      Colors.white,
-                                    fontSize:   26,
-                                    fontWeight: FontWeight.w800,
-                                    fontFamily: 'WorkSans',
-                                  ),
+                              child: const Padding(
+                                padding: EdgeInsets.all(9),
+                                child: Image(
+                                  image: AssetImage(kAvatarIA),
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
                                 ),
                               ),
                             ),

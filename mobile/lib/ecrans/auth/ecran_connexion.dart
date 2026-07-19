@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../composants/marque.dart';
 import '../../fournisseurs/fournisseur_auth.dart';
 import '../../noyau/routes.dart';
 
@@ -248,48 +249,15 @@ class _EcranConnexionState extends State<EcranConnexion>
 
   Widget _buildBranding() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Logo : entrée animée + respiration continue (bob vertical)
-        _entree(_anim0, AnimatedBuilder(
-          animation: _ambiance,
-          builder: (_, child) => Transform.translate(
-            offset: Offset(0, (_ambiance.value - 0.5) * 9),
-            child:  child,
-          ),
-          child: Container(
-            width:  66,
-            height: 66,
-            decoration: BoxDecoration(
-              gradient:     _T.degradeBleu,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color:      _T.nearlyDarkBlue.withValues(alpha: 0.35),
-                  blurRadius: 24,
-                  offset:     const Offset(0, 12),
-                ),
-              ],
-            ),
-            child: const Center(
-              child: Text(
-                'N',
-                style: TextStyle(
-                  fontFamily:    _T.font,
-                  fontSize:      32,
-                  fontWeight:    FontWeight.w700,
-                  color:         Colors.white,
-                  letterSpacing: -1,
-                ),
-              ),
-            ),
-          ),
-        )),
+        // Logo officiel : entrée en fondu, puis stable (aucun mouvement continu)
+        _entree(_anim0, const LogoNesj(taille: 78, surCarte: true)),
 
         const SizedBox(height: 26),
 
         _entree(_animTit, Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // Puce de marque
             Container(
@@ -299,7 +267,7 @@ class _EcranConnexionState extends State<EcranConnexion>
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Text(
-                'NESJACADEMY',
+                'NESIA',
                 style: TextStyle(
                   fontFamily:    _T.font,
                   fontSize:      11,
@@ -314,6 +282,7 @@ class _EcranConnexionState extends State<EcranConnexion>
 
             const Text(
               'Bon retour',
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily:    _T.font,
                 fontSize:      36,
@@ -328,6 +297,7 @@ class _EcranConnexionState extends State<EcranConnexion>
 
             const Text(
               'Connecte-toi pour reprendre\nlà où tu t\'es arrêté.',
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: _T.font,
                 fontSize:   15,
@@ -343,13 +313,14 @@ class _EcranConnexionState extends State<EcranConnexion>
 
         // Chips de fonctionnalités — cascade individuelle
         Wrap(
+          alignment: WrapAlignment.center,
           spacing: 8,
           runSpacing: 8,
           children: [
             for (int i = 0; i < _nbChips; i++)
               _entree(
                 _animChips[i],
-                _FeatureChip(const ['BEPC', 'BAC', 'Terminale C', '3ème'][i]),
+                _FeatureChip(const ['BAC', 'Terminales C', 'Terminales A4', 'Terminales D'][i]),
                 dy: 24,
               ),
           ],

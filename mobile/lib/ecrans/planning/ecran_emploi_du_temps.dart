@@ -251,7 +251,7 @@ class _EcranEmploiDuTempsState extends State<EcranEmploiDuTemps>
 
         const SizedBox(height: 14),
 
-        // NESIA assistant
+        // NESTOR assistant
         _entree(_iv(0.1, 0.6), const Padding(
           padding: EdgeInsets.symmetric(horizontal: 24),
           child: _AssistantNesia(

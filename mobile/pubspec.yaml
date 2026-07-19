@@ -66,6 +66,9 @@ dependencies:
   # Son de félicitation à la fin d'une séance
   audioplayers: ^6.1.0
 
+  # Export du planning en PDF : aperçu, impression et partage natifs
+  printing: ^5.13.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -81,14 +84,17 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.1
 
 # ── Configuration de l'icône de l'application ────────────────────────────────
-# Place ton logo carré (PNG, idéalement 1024x1024) dans assets/icone/logo.png
-# puis exécute :  dart run flutter_launcher_icons
+# Logo officiel NESJAcademy. Régénérer après changement :  dart run flutter_launcher_icons
+#   - app_icon.png            : logo sur fond blanc (iOS + Android « legacy »)
+#   - app_icon_foreground.png : logo transparent centré (1er plan de l'icône adaptative)
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icone/logo.png"
+  image_path: "assets/icone/app_icon.png"
   min_sdk_android: 21
   remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icone/app_icon_foreground.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -103,6 +109,7 @@ flutter:
 
   assets:
     - assets/sons/
+    - assets/images/
 
   fonts:
     - family: WorkSans

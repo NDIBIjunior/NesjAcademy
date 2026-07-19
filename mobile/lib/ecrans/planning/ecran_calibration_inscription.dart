@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../composants/marque.dart';
 import '../../composants/toast_app.dart';
 import '../../donnees/api/client_api.dart';
 import '../../noyau/constantes.dart';
@@ -479,11 +480,11 @@ class _AvatarNesia extends StatelessWidget {
               blurRadius: taille * 0.3, offset: Offset(0, taille * 0.14)),
         ],
       ),
-      child: Center(
-        child: Text('N',
-            style: TextStyle(
-              fontFamily: _T.font, color: Colors.white,
-              fontSize: taille * 0.46, fontWeight: FontWeight.w700)),
+      padding: EdgeInsets.all(taille * 0.16),
+      child: const Image(
+        image: AssetImage(kAvatarIA),
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../ecrans/ia/ecran_chat_nesia.dart';
 import '../noyau/theme.dart';
+import 'marque.dart';
 
 // Bulle flottante NESIA — à placer dans un Stack au-dessus du contenu principal.
 // Positionnement recommandé :
@@ -93,16 +94,11 @@ class _BulleNesiaState extends State<BulleNesia>
                   colors: [Color(0xFF4F7FFF), Color(0xFF0F1E48)],
                 ),
               ),
-              child: const Center(
-                child: Text(
-                  'N',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                  ),
-                ),
+              padding: const EdgeInsets.all(7),
+              child: const Image(
+                image: AssetImage(kAvatarIA),
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
               ),
             ),
             // ── Badge "IA" en haut à droite ──────

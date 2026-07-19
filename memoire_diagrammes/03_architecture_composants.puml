@@ -1,0 +1,54 @@
+@startuml 03_architecture_composants
+!theme plain
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam linetype ortho
+
+actor "Élève / Parent" as User
+
+package "Application mobile (Flutter)" {
+  [Écrans\n(Accueil, Planning, Progrès,\nProfil, Chat NESIA)] as Ecrans
+  [Cache mémoire\n(stale-while-revalidate)] as Cache
+  [Client API\n(gestion JWT, refresh silencieux)] as ClientApi
+}
+
+package "Serveur Django REST Framework" {
+  [Module utilisateurs\n(auth, OTP, profils)] as ModUtil
+  [Module planning\n(objectifs, disponibilité,\nsessions, algorithme.py)] as ModPlanning
+  [Module diagnostic\n(QCM adaptatif)] as ModDiag
+  [Module ia — NESIA\n(fournisseur.py, tuteur.py,\nconstructeur de contexte)] as ModIA
+}
+
+database "Base de données\nrelationnelle\n(SQLite dev / PostgreSQL prod)" as BDD
+
+cloud "Fournisseurs LLM externes" {
+  [Gemini] as Gemini
+  [DeepSeek\n(via OpenRouter)] as DeepSeek
+  [Claude\n(Anthropic)] as Claude
+}
+
+User --> Ecrans
+Ecrans --> Cache
+Cache --> ClientApi
+ClientApi --> ModUtil : HTTPS / JSON + JWT
+ClientApi --> ModPlanning : HTTPS / JSON + JWT
+ClientApi --> ModDiag : HTTPS / JSON + JWT
+ClientApi --> ModIA : HTTPS / JSON + JWT
+
+ModUtil --> BDD
+ModPlanning --> BDD
+ModDiag --> BDD
+ModIA --> BDD
+
+ModIA --> Gemini : requête contextualisée
+ModIA --> DeepSeek : (fournisseur interchangeable)
+ModIA --> Claude : par configuration .env
+
+note right of ModIA
+  Fabrique logicielle : un seul
+  fournisseur actif à la fois,
+  choisi par variable d'environnement,
+  sans modification du code.
+end note
+
+@enduml

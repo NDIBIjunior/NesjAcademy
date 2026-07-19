@@ -64,7 +64,7 @@ class _EcranBienvenueState extends State<EcranBienvenue> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: const [
                     Text(
-                      'NESJAcademy',
+                      'NESIA',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 28,

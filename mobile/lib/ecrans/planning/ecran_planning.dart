@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:printing/printing.dart';
 import 'package:shimmer/shimmer.dart';
 
 import '../../donnees/api/client_api.dart';
@@ -288,6 +289,57 @@ class _EcranPlanningState extends State<EcranPlanning>
     _chargerSemaine(prev);
   }
 
+  // ── Export du planning en PDF ───────────────────────────────────────────────
+  // Récupère le PDF généré par le backend (auth JWT via ClientApi) puis ouvre
+  // la feuille native d'aperçu / impression / partage (package printing).
+  bool _exportEnCours = false;
+
+  Future<void> _exporterPdf() async {
+    if (_exportEnCours) return;
+    setState(() => _exportEnCours = true);
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Préparation de ton planning en PDF…'),
+      duration: Duration(seconds: 2),
+    ));
+
+    try {
+      // Exporte uniquement la semaine actuellement affichée à l'écran.
+      final reponse = await ClientApi.get(
+        '${Constantes.urlExporterPlanningPdf}?date_debut=${_iso(_debutSemaine)}',
+      );
+
+      // Le backend renvoie un PDF (application/pdf) en cas de succès, sinon un
+      // JSON d'erreur ({"erreur": "..."}).
+      final typeContenu = reponse.headers['content-type'] ?? '';
+      if (reponse.statusCode == 200 && typeContenu.contains('pdf')) {
+        final octets = reponse.bodyBytes;
+        final nomFichier =
+            'planning_nesjacademy_${_iso(DateTime.now())}.pdf';
+        await Printing.sharePdf(bytes: octets, filename: nomFichier);
+      } else {
+        String message = 'Impossible de générer le PDF.';
+        try {
+          final corps =
+              jsonDecode(utf8.decode(reponse.bodyBytes)) as Map<String, dynamic>;
+          message = (corps['erreur'] ?? corps['detail'] ?? message).toString();
+        } catch (_) {}
+        messenger.showSnackBar(SnackBar(
+          content: Text(message),
+          backgroundColor: _T.amber,
+        ));
+      }
+    } catch (_) {
+      messenger.showSnackBar(SnackBar(
+        content: const Text('Échec de l\'export. Vérifie ta connexion.'),
+        backgroundColor: _T.amber,
+      ));
+    } finally {
+      if (mounted) setState(() => _exportEnCours = false);
+    }
+  }
+
   void _afficherDetails(Map<String, dynamic> session, DateTime date) {
     showModalBottomSheet(
       context: context,
@@ -524,6 +576,32 @@ class _EcranPlanningState extends State<EcranPlanning>
                                   letterSpacing: 0.3,
                                   color:         _T.darkerText,
                                 )),
+                            ),
+                          ),
+                          // Bouton d'export du planning en PDF
+                          Tooltip(
+                            message: 'Exporter en PDF',
+                            child: SizedBox(
+                              height: 38, width: 38,
+                              child: InkWell(
+                                highlightColor: Colors.transparent,
+                                borderRadius:   BorderRadius.circular(32),
+                                onTap: _exportEnCours ? null : _exporterPdf,
+                                child: Center(
+                                  child: _exportEnCours
+                                      ? const SizedBox(
+                                          height: 18, width: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.2,
+                                            valueColor: AlwaysStoppedAnimation(
+                                                _T.nearlyDarkBlue),
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.picture_as_pdf_rounded,
+                                          color: _T.nearlyDarkBlue),
+                                ),
+                              ),
                             ),
                           ),
                           SizedBox(

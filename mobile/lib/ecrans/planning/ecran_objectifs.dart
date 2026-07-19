@@ -12,7 +12,7 @@ import '../../noyau/routes.dart';
 // EcranObjectifs — refonte thème Fitness en 2 phases :
 //   Phase 0 : NESIA se présente (page hero animée)
 //   Phase 1 : formulaire d'objectifs (note cible + difficulté + inclusion)
-// NESIA remplace l'ancien « prof virtuel ». La logique réseau est INCHANGÉE.
+// NESTOR remplace l'ancien « prof virtuel ». La logique réseau est INCHANGÉE.
 // ─────────────────────────────────────────────────────────────────────────────
 
 abstract class _T {
@@ -427,7 +427,7 @@ class _PresentationNesiaState extends State<_PresentationNesia>
         children: [
           const SizedBox(height: 40),
 
-          // Avatar NESIA pulsant
+          // Avatar NESTOR pulsant
           _entree(_iv(0, 0.5), ScaleTransition(
             scale: Tween<double>(begin: 1.0, end: 1.06).animate(
               CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut)),
@@ -451,7 +451,7 @@ class _PresentationNesiaState extends State<_PresentationNesia>
           const SizedBox(height: 14),
 
           _entree(_iv(0.15, 0.65), const Text(
-            'Moi, c\'est NESIA 👋',
+            'Moi, c\'est NESTOR 👋',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: _T.font, fontSize: 30, fontWeight: FontWeight.w700,
@@ -481,7 +481,7 @@ class _PresentationNesiaState extends State<_PresentationNesia>
 
           const SizedBox(height: 36),
 
-          // Bouton — révélé (glissé + fondu) seulement quand NESIA a fini d'écrire.
+          // Bouton — révélé (glissé + fondu) seulement quand NESTOR a fini d'écrire.
           IgnorePointer(
             ignoring: !_fini,
             child: AnimatedSlide(
@@ -541,7 +541,7 @@ class _AvatarNesia extends StatelessWidget {
   }
 }
 
-// Bulle d'assistant : petit avatar NESIA + message dactylographié.
+// Bulle d'assistant : petit avatar NESTOR + message dactylographié.
 class _AssistantNesia extends StatelessWidget {
   final String message;
   const _AssistantNesia({required this.message});
